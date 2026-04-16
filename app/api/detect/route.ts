@@ -3,8 +3,10 @@ import { execArgs, parseMediaInfo } from '@/lib/ytdlp'
 import { isYouTubeUrl } from '@/lib/validate'
 
 export async function POST(req: Request): Promise<NextResponse> {
-  const body = await req.json().catch(() => ({}))
-  const url: string = body?.url ?? ''
+  const body: unknown = await req.json().catch(() => ({}))
+  const url = typeof body === 'object' && body !== null && 'url' in body
+    ? String((body as Record<string, unknown>).url)
+    : ''
 
   if (!isYouTubeUrl(url)) {
     return NextResponse.json(

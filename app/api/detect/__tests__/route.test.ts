@@ -68,4 +68,19 @@ describe('POST /api/detect', () => {
     const body = await res.json()
     expect(body.error).toContain('unavailable')
   })
+
+  it('returns 500 when yt-dlp output cannot be parsed', async () => {
+    mockExec.mockResolvedValueOnce({ stdout: 'not-json-output', stderr: '', code: 0 })
+
+    const req = new Request('http://localhost/api/detect', {
+      method: 'POST',
+      body: JSON.stringify({ url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+    const res = await POST(req)
+    expect(res.status).toBe(500)
+    const body = await res.json()
+    expect(body.error).toContain('parse')
+  })
 })
