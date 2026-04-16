@@ -74,7 +74,14 @@ export default function Home() {
       />
 
       {error && (
-        <div className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-300">
+        <div
+          className="rounded-lg border px-4 py-3 text-sm"
+          style={{
+            background: 'var(--bg-status-error)',
+            borderColor: 'var(--border-status-error)',
+            color: 'var(--text-status-error)',
+          }}
+        >
           {error}
         </div>
       )}
