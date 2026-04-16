@@ -1,14 +1,18 @@
 import { NextResponse } from 'next/server'
 import path from 'path'
-import { streamCommand, ensureOutputDir, parseProgress, resolveOutputDir, parseDestination } from '@/lib/ytdlp'
+import { streamCommand, ensureOutputDir, parseProgress, parseDestination } from '@/lib/ytdlp'
 import { isYouTubeUrl } from '@/lib/validate'
 import type { DownloadStreamLine } from '@/types/media'
 
 export async function POST(req: Request): Promise<Response> {
   const body: unknown = await req.json().catch(() => ({}))
-  const { url, formatId, title, ext } = (
-    typeof body === 'object' && body !== null ? body : {}
-  ) as { url?: string; formatId?: string; title?: string; ext?: string }
+  const record = typeof body === 'object' && body !== null
+    ? (body as Record<string, unknown>)
+    : {}
+  const url = typeof record.url === 'string' ? record.url : ''
+  const formatId = typeof record.formatId === 'string' ? record.formatId : ''
+  const title = typeof record.title === 'string' ? record.title : ''
+  const ext = typeof record.ext === 'string' ? record.ext : ''
 
   if (!url || !isYouTubeUrl(url)) {
     return NextResponse.json({ error: 'Invalid YouTube URL' }, { status: 400 })
@@ -26,7 +30,7 @@ export async function POST(req: Request): Promise<Response> {
       const args = ['yt-dlp', '-f', formatId, url, '-o', outputTemplate, '--no-playlist', '--newline']
 
       try {
-        // Track the actual path yt-dlp writes to (may differ from title due to filename sanitization).
+        // yt-dlp emits the final merged path last; we retain the last detected path.
         let detectedPath: string | null = null
 
         for await (const line of streamCommand(args)) {
@@ -40,7 +44,7 @@ export async function POST(req: Request): Promise<Response> {
         }
 
         // Prefer the path yt-dlp reported; fall back to constructed path.
-        const savedPath = detectedPath ?? path.join(resolveOutputDir(), `${title}.${ext}`)
+        const savedPath = detectedPath ?? path.join(outputDir, `${title}.${ext}`)
         const done: DownloadStreamLine = { type: 'done', savedPath }
         controller.enqueue(encoder.encode(JSON.stringify(done) + '\n'))
       } catch (err) {
