@@ -1,6 +1,5 @@
 import { parseProgress, parseMediaInfo, resolveOutputDir, parseDestination } from '../ytdlp'
 import path from 'path'
-import os from 'os'
 
 describe('parseProgress', () => {
   it('parses a standard download progress line', () => {

@@ -36,6 +36,9 @@ export async function execArgs(args: string[]): Promise<ExecResult> {
     let stderr = ''
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8') })
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8') })
+    proc.on('error', (err: Error) => {
+      resolve({ stdout: '', stderr: err.message, code: 1 })
+    })
     proc.on('close', (code) => {
       resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 1 })
     })
@@ -60,6 +63,11 @@ export async function* streamCommand(args: string[]): AsyncGenerator<string> {
     chunk.toString('utf8').split('\n').filter(Boolean).forEach(push))
   proc.stderr.on('data', (chunk: Buffer) =>
     chunk.toString('utf8').split('\n').filter(Boolean).forEach(push))
+  proc.on('error', (err: Error) => {
+    push(`ERROR: ${err.message}`)
+    closed = true
+    notify?.()
+  })
   proc.on('close', () => { closed = true; notify?.() })
 
   while (!closed || buffer.length > 0) {
