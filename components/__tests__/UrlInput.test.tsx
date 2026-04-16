@@ -26,5 +26,6 @@ describe('UrlInput', () => {
   it('shows loading state when loading prop is true', () => {
     render(<UrlInput onDetect={jest.fn()} disabled={false} loading={true} />)
     expect(screen.getByRole('button')).toHaveTextContent(/detecting/i)
+    expect(screen.getByPlaceholderText(/youtube/i)).toBeDisabled()
   })
 })
