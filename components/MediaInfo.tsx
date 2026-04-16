@@ -20,17 +20,22 @@ interface MediaInfoProps {
 
 export default function MediaInfo({ info }: MediaInfoProps) {
   return (
-    <div className="flex gap-4 rounded-lg bg-[#16213e] p-4">
+    <div
+      className="flex gap-4 rounded-lg border p-4"
+      style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
+    >
       {info.thumbnail && (
         <img
           src={info.thumbnail}
           alt={info.title}
-          className="h-20 w-36 rounded object-cover"
+          className="h-20 w-36 flex-shrink-0 rounded object-cover"
         />
       )}
       <div className="flex flex-col justify-center">
-        <h2 className="font-semibold text-gray-100">{info.title}</h2>
-        <div className="mt-1 flex gap-3 text-xs text-gray-400">
+        <h2 className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+          {info.title}
+        </h2>
+        <div className="mt-1 flex gap-3 text-xs" style={{ color: 'var(--text-secondary)' }}>
           <span>{info.channel}</span>
           <span>{formatDuration(info.duration)}</span>
           {info.viewCount && <span>{formatViews(info.viewCount)}</span>}
