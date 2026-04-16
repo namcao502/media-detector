@@ -8,7 +8,10 @@ interface LogPanelProps {
 export default function LogPanel({ lines, visible }: LogPanelProps) {
   if (!visible || lines.length === 0) return null
   return (
-    <div className="mt-2 max-h-32 overflow-y-auto rounded bg-black/40 p-2 font-mono text-xs text-green-400">
+    <div
+      className="mt-2 max-h-32 overflow-y-auto rounded px-3 py-2 font-mono text-xs"
+      style={{ background: 'var(--log-bg)', color: 'var(--log-text)' }}
+    >
       {lines.map((line, i) => (
         <div key={i}>{line}</div>
       ))}
