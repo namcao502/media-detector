@@ -89,39 +89,22 @@ Downloads go to `~/Documents/MediaDetector`. Use `ensureOutputDir()` from `lib/y
 
 ## Theme System
 
-All colors are CSS custom properties defined in `app/globals.css`:
+CSS custom properties in `app/globals.css`: `:root` (light) + `@media (prefers-color-scheme: dark)`. Follows OS automatically, no toggle.
 
-- `:root` -- light mode defaults
-- `@media (prefers-color-scheme: dark)` -- dark overrides
+Components use inline `style` props with `var(--token)`. Never use hardcoded Tailwind color classes (`bg-gray-800`, `text-red-300`, etc.).
 
-No theme toggle exists. The app follows OS preference automatically.
-
-Components apply tokens via inline `style` props:
-```tsx
-style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
-```
-
-Key tokens: `--bg-page`, `--bg-card`, `--bg-input`, `--border`, `--text-primary`, `--text-secondary`, `--text-muted`, `--accent`, `--status-ok`, `--status-error`, `--status-warn`, `--bg-status-error`, `--bg-status-warn`, and their associated border/text variants.
-
-Do not add hardcoded color classes (`bg-gray-800`, `text-red-300`, etc.). Use tokens.
+Key tokens: `--bg-page`, `--bg-card`, `--bg-input`, `--border`, `--text-primary`, `--text-secondary`, `--text-muted`, `--accent`, `--status-ok`, `--status-error`, `--status-warn`, plus `--bg-status-{error,warn}`, `--border-status-{error,warn}`, `--text-status-{error,warn}(-title)`.
 
 ---
 
 ## Testing
 
-Two Jest environments configured:
+Jest: `jsdom` for `components/__tests__/`, `node` for `app/api/**/` and `lib/__tests__/`.
 
-- `jsdom` -- component tests in `components/__tests__/`
-- `node` -- API route tests in `app/api/**/` and `lib/__tests__/`
+```bash
+npx jest path/to/test --no-coverage  # single file
+npm test -- --no-coverage            # all
+npx tsc --noEmit                     # typecheck
+```
 
-Run a single file: `npx jest path/to/test --no-coverage`
-
-Run all: `npm test -- --no-coverage`
-
-Type check: `npx tsc --noEmit`
-
-### Test conventions
-
-- API routes: mock `lib/ytdlp` and `lib/validate` at the module level
-- Components: use `@testing-library/react`; fire real DOM events with `fireEvent`
-- Never assert on exact CSS classes for themed elements -- the component uses inline `style`, not class names
+Conventions: mock `lib/ytdlp` + `lib/validate` at module level in API tests. Use `fireEvent` in component tests. Never assert on CSS class names -- components use inline `style`.

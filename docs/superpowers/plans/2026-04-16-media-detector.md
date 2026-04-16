@@ -2075,7 +2075,7 @@ export default function Home() {
         setMediaInfo(data)
       }
     } catch {
-      setError('Network error. Is the server running?')
+      setError('Network error. Is the server running?')1
     } finally {
       setDetecting(false)
     }

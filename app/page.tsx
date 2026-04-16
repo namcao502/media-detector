@@ -6,6 +6,8 @@ import UrlInput from '@/components/UrlInput'
 import MediaInfo from '@/components/MediaInfo'
 import FormatTabs from '@/components/FormatTabs'
 import type { MediaInfo as MediaInfoType, StatusResult } from '@/types/media'
+import ThemeButton from '@/components/ThemeButton'
+import { useTheme } from '@/hooks/useTheme'
 
 export default function Home() {
   const [status, setStatus] = useState<StatusResult | null>(null)
@@ -13,6 +15,7 @@ export default function Home() {
   const [mediaInfo, setMediaInfo] = useState<MediaInfoType | null>(null)
   const [detecting, setDetecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const theme = useTheme()
 
   const depsReady = status?.python.found && status?.ytdlp.found
 
@@ -58,11 +61,24 @@ export default function Home() {
 
   return (
     <main className="mx-auto max-w-2xl space-y-5 px-4 py-10">
-      <div className="text-center">
-        <h1 className="text-2xl font-bold uppercase tracking-widest text-gray-100">
+      <div style={{ position: 'relative', textAlign: 'center' }}>
+        <div style={{ position: 'absolute', right: 0, top: 0 }}>
+          <ThemeButton
+            accentHex={theme.accentHex}
+            isRainbow={theme.isRainbow}
+            setPreset={theme.setPreset}
+            toggleRainbow={theme.toggleRainbow}
+          />
+        </div>
+        <h1
+          className="text-2xl font-bold uppercase tracking-widest"
+          style={{ color: 'var(--text-primary)' }}
+        >
           Media Detector
         </h1>
-        <p className="mt-1 text-xs text-gray-500">YouTube & YouTube Music</p>
+        <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+          YouTube & YouTube Music
+        </p>
       </div>
 
       <StatusBar status={status} onRefresh={() => fetchStatus(true)} />

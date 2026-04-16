@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p \"C:\\\\Users\\\\NamNguyen\\\\.claude\\\\skills\\\\quick-plan\\\\scripts\")",
+      "Bash(cp \"C:\\\\Users\\\\NamNguyen\\\\.claude\\\\plugins\\\\cache\\\\claude-plugins-official\\\\superpowers\\\\5.0.7\\\\skills\\\\brainstorming\\\\scripts\"/* \"C:\\\\Users\\\\NamNguyen\\\\.claude\\\\skills\\\\quick-plan\\\\scripts/\")",
+      "Bash(mv \"C:\\\\Users\\\\NamNguyen\\\\.claude\\\\skills\\\\quick-plan\" \"C:\\\\Users\\\\NamNguyen\\\\.claude\\\\skills\\\\s1-plan\")",
+      "Bash(mv \"C:\\\\Users\\\\NamNguyen\\\\.claude\\\\skills\\\\plan-review\" \"C:\\\\Users\\\\NamNguyen\\\\.claude\\\\skills\\\\s2-plan-review\")",
+      "Bash(mv \"C:\\\\Users\\\\NamNguyen\\\\.claude\\\\skills\\\\quick-implement\" \"C:\\\\Users\\\\NamNguyen\\\\.claude\\\\skills\\\\s3-implement\")",
+      "Bash(mv \"C:\\\\Users\\\\NamNguyen\\\\.claude\\\\skills\\\\spec-implementation-review\" \"C:\\\\Users\\\\NamNguyen\\\\.claude\\\\skills\\\\s4-impl-review\")"
+    ]
+  }
+}
