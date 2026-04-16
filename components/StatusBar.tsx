@@ -24,7 +24,7 @@ async function streamToLines(
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
-    decoder.decode(value).split('\n').filter(Boolean).forEach(onLine)
+    decoder.decode(value, { stream: true }).split('\n').filter(Boolean).forEach(onLine)
   }
 }
 
@@ -141,9 +141,10 @@ export default function StatusBar({ status, onRefresh }: StatusBarProps) {
   }
 
   // Python row
-  let pythonState: RowState = 'ok'
-  let pythonMessage = `Version ${status.python.version} detected`
+  let pythonState: RowState
+  let pythonMessage: string
   let pythonAction: ReactNode = null
+
   if (!status.python.found) {
     pythonState = 'error'
     pythonMessage = 'Not found -- install Python 3.8+ to continue'
@@ -162,14 +163,16 @@ export default function StatusBar({ status, onRefresh }: StatusBarProps) {
         python.org &rarr;
       </a>
     )
+  } else {
+    pythonState = 'ok'
+    pythonMessage = `Version ${status.python.version} detected`
   }
 
   // yt-dlp row
-  let ytdlpState: RowState = 'ok'
-  let ytdlpMessage = `Version ${status.ytdlp.version}`
-  if (status.ytdlp.updateStatus === 'updated') ytdlpMessage += ' -- updated'
-  else if (status.ytdlp.updateStatus === 'up-to-date') ytdlpMessage += ' -- up to date'
+  let ytdlpState: RowState
+  let ytdlpMessage: string
   let ytdlpAction: ReactNode = null
+
   if (!status.ytdlp.found) {
     ytdlpState = 'error'
     ytdlpMessage = 'Not installed -- required to detect and download media'
@@ -198,6 +201,12 @@ export default function StatusBar({ status, onRefresh }: StatusBarProps) {
         {loading ? 'Retrying...' : 'Retry'}
       </button>
     )
+  } else {
+    ytdlpState = 'ok'
+    const suffix =
+      status.ytdlp.updateStatus === 'updated' ? ' -- updated' :
+      status.ytdlp.updateStatus === 'up-to-date' ? ' -- up to date' : ''
+    ytdlpMessage = `Version ${status.ytdlp.version}${suffix}`
   }
 
   return (
