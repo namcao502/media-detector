@@ -17,6 +17,11 @@ const noYtdlp: StatusResult = {
   ytdlp: { found: false, version: null, updateStatus: 'skipped' },
 }
 
+const ytdlpFailed: StatusResult = {
+  python: { found: true, version: '3.12.2' },
+  ytdlp: { found: true, version: '2025.04.15', updateStatus: 'failed' },
+}
+
 describe('StatusBar', () => {
   it('shows green status when all dependencies are OK', () => {
     render(<StatusBar status={allGood} onRefresh={jest.fn()} />)
@@ -49,5 +54,15 @@ describe('StatusBar', () => {
     fireEvent.click(screen.getByText(/Install/i))
 
     await waitFor(() => expect(onRefresh).toHaveBeenCalled())
+  })
+
+  it('shows loading message when status is null', () => {
+    render(<StatusBar status={null} onRefresh={jest.fn()} />)
+    expect(screen.getByText(/Checking dependencies/i)).toBeInTheDocument()
+  })
+
+  it('shows Retry button when yt-dlp update failed', () => {
+    render(<StatusBar status={ytdlpFailed} onRefresh={jest.fn()} />)
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
   })
 })

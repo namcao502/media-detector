@@ -33,9 +33,14 @@ export default function StatusBar({ status, onRefresh }: StatusBarProps) {
     setLoading(true)
     setLogLines([])
     setShowLog(true)
-    await streamToLines(endpoint, 'POST', (line) => setLogLines((prev) => [...prev, line]))
-    setLoading(false)
-    onRefresh()
+    try {
+      await streamToLines(endpoint, 'POST', (line) => setLogLines((prev) => [...prev, line]))
+      onRefresh()
+    } catch {
+      setLogLines((prev) => [...prev, 'Error: request failed'])
+    } finally {
+      setLoading(false)
+    }
   }
 
   if (!status) {
