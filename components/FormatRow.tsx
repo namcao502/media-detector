@@ -21,13 +21,15 @@ export default function FormatRow({ type, format, url, title, onDownloadStart }:
   const [savedPath, setSavedPath] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
 
-  const label = type === 'video'
-    ? `${(format as VideoFormat).height}p`
-    : `${(format as AudioFormat).abr ?? '?'}kbps`
+  const label =
+    type === 'video'
+      ? `${(format as VideoFormat).height}p`
+      : `${(format as AudioFormat).abr ?? '?'}kbps`
 
-  const codec = type === 'video'
-    ? (format as VideoFormat).vcodec
-    : (format as AudioFormat).acodec
+  const codec =
+    type === 'video'
+      ? (format as VideoFormat).vcodec
+      : (format as AudioFormat).acodec
 
   async function handleDownload() {
     setDownloading(true)
@@ -66,24 +68,41 @@ export default function FormatRow({ type, format, url, title, onDownloadStart }:
   }
 
   return (
-    <div className="rounded-lg bg-[#16213e] px-4 py-3">
+    <div
+      className="rounded-lg border px-4 py-3"
+      style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
+    >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <span className="rounded bg-[#0f3460] px-2 py-0.5 text-xs font-bold text-blue-300">{label}</span>
+          <span
+            className="rounded px-2 py-0.5 text-xs font-bold"
+            style={{ background: 'var(--bg-badge)', color: 'var(--text-badge)' }}
+          >
+            {label}
+          </span>
           <div>
-            <span className="text-sm text-gray-200">{format.ext.toUpperCase()}</span>
-            <span className="ml-2 text-xs text-gray-500">{codec}</span>
+            <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+              {format.ext.toUpperCase()}
+            </span>
+            <span className="ml-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+              {codec}
+            </span>
             {type === 'video' && (format as VideoFormat).fps && (
-              <span className="ml-2 text-xs text-gray-500">{(format as VideoFormat).fps}fps</span>
+              <span className="ml-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                {(format as VideoFormat).fps}fps
+              </span>
             )}
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-gray-500">{formatFilesize(format.filesize)}</span>
+          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            {formatFilesize(format.filesize)}
+          </span>
           {!downloading && !savedPath && (
             <button
               onClick={handleDownload}
-              className="rounded bg-[#e94560] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#d63651]"
+              className="rounded px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+              style={{ background: 'var(--accent)' }}
             >
               Download
             </button>
