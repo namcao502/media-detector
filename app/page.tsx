@@ -16,9 +16,10 @@ export default function Home() {
 
   const depsReady = status?.python.found && status?.ytdlp.found
 
-  async function fetchStatus() {
+  async function fetchStatus(forceRefresh = false) {
     try {
-      const res = await fetch('/api/status')
+      const url = forceRefresh ? '/api/status?refresh=1' : '/api/status'
+      const res = await fetch(url)
       const data = await res.json()
       setStatus(data)
     } catch {
@@ -64,7 +65,7 @@ export default function Home() {
         <p className="mt-1 text-xs text-gray-500">YouTube & YouTube Music</p>
       </div>
 
-      <StatusBar status={status} onRefresh={fetchStatus} />
+      <StatusBar status={status} onRefresh={() => fetchStatus(true)} />
 
       <UrlInput
         onDetect={handleDetect}

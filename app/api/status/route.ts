@@ -31,8 +31,11 @@ async function updateYtdlp(): Promise<UpdateStatus> {
   return 'updated'
 }
 
-export async function GET(): Promise<NextResponse> {
-  if (cachedStatus) {
+export async function GET(req: Request): Promise<NextResponse> {
+  const { searchParams } = new URL(req.url)
+  const forceRefresh = searchParams.get('refresh') === '1'
+
+  if (cachedStatus && !forceRefresh) {
     return NextResponse.json(cachedStatus)
   }
 

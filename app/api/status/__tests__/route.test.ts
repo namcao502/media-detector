@@ -19,7 +19,7 @@ describe('GET /api/status', () => {
       .mockResolvedValueOnce({ stdout: '2025.04.15', stderr: '', code: 0 })    // yt-dlp --version
       .mockResolvedValueOnce({ stdout: 'yt-dlp is up to date', stderr: '', code: 0 }) // yt-dlp -U
 
-    const res = await GET()
+    const res = await GET(new Request('http://localhost/api/status'))
     const body = await res.json()
 
     expect(res.status).toBe(200)
@@ -35,7 +35,7 @@ describe('GET /api/status', () => {
       .mockResolvedValueOnce({ stdout: '', stderr: 'command not found', code: 1 }) // python
       .mockResolvedValueOnce({ stdout: '', stderr: 'command not found', code: 1 }) // python3
 
-    const res = await GET()
+    const res = await GET(new Request('http://localhost/api/status'))
     const body = await res.json()
 
     expect(body.python.found).toBe(false)
