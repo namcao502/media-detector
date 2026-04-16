@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import type { VideoFormat, AudioFormat } from '@/types/media'
+import type { VideoFormat, AudioFormat, DownloadStreamLine } from '@/types/media'
 import DownloadProgress from './DownloadProgress'
 
 type FormatRowProps =
@@ -35,34 +35,34 @@ export default function FormatRow({ type, format, url, title, onDownloadStart }:
     setSavedPath(null)
     onDownloadStart(format.formatId, format.ext)
 
-    const res = await fetch('/api/download', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, formatId: format.formatId, title, ext: format.ext }),
-    })
+    try {
+      const res = await fetch('/api/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, formatId: format.formatId, title, ext: format.ext }),
+      })
 
-    if (!res.body) { setDownloading(false); return }
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
+      if (!res.body) return
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      const lines = decoder.decode(value).split('\n').filter(Boolean)
-      for (const line of lines) {
-        try {
-          const parsed = JSON.parse(line) as { type: string; percent?: number; savedPath?: string }
-          if (parsed.type === 'progress' && parsed.percent !== undefined) setPercent(parsed.percent)
-          if (parsed.type === 'done' && parsed.savedPath !== undefined) {
-            setSavedPath(parsed.savedPath)
-            setPercent(100)
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const lines = decoder.decode(value, { stream: true }).split('\n').filter(Boolean)
+        for (const line of lines) {
+          try {
+            const parsed = JSON.parse(line) as DownloadStreamLine
+            if (parsed.type === 'progress') setPercent(parsed.percent)
+            if (parsed.type === 'done') { setSavedPath(parsed.savedPath); setPercent(100) }
+          } catch {
+            // ignore malformed lines
           }
-        } catch {
-          // ignore malformed lines
         }
       }
+    } finally {
+      setDownloading(false)
     }
-    setDownloading(false)
   }
 
   return (

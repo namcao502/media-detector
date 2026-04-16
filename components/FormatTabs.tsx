@@ -7,9 +7,10 @@ import FormatRow from './FormatRow'
 interface FormatTabsProps {
   info: MediaInfo
   url: string
+  onDownloadStart?: (formatId: string, ext: string) => void
 }
 
-export default function FormatTabs({ info, url }: FormatTabsProps) {
+export default function FormatTabs({ info, url, onDownloadStart }: FormatTabsProps) {
   const [activeTab, setActiveTab] = useState<'video' | 'audio'>('video')
 
   return (
@@ -39,7 +40,7 @@ export default function FormatTabs({ info, url }: FormatTabsProps) {
               format={f}
               url={url}
               title={info.title}
-              onDownloadStart={() => {}}
+              onDownloadStart={onDownloadStart ?? (() => {})}
             />
           ))}
         {activeTab === 'audio' &&
@@ -50,7 +51,7 @@ export default function FormatTabs({ info, url }: FormatTabsProps) {
               format={f}
               url={url}
               title={info.title}
-              onDownloadStart={() => {}}
+              onDownloadStart={onDownloadStart ?? (() => {})}
             />
           ))}
       </div>

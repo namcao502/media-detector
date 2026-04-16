@@ -6,9 +6,10 @@ interface DownloadProgressProps {
 }
 
 export default function DownloadProgress({ percent, savedPath }: DownloadProgressProps) {
+  const dir = savedPath ? savedPath.split(/[\\/]/).slice(0, -1).join('\\') : null
+
   async function handleOpenFolder() {
-    if (!savedPath) return
-    const dir = savedPath.split(/[\\/]/).slice(0, -1).join('\\')
+    if (!dir) return
     await fetch('/api/open-folder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -34,7 +35,7 @@ export default function DownloadProgress({ percent, savedPath }: DownloadProgres
         <span>{percent}%</span>
         {savedPath && (
           <div className="flex items-center gap-2">
-            <span className="text-green-400">Saved to Documents\MediaDetector</span>
+            <span className="text-green-400">Saved to {dir}</span>
             <button
               onClick={handleOpenFolder}
               className="rounded bg-gray-700 px-2 py-0.5 text-gray-300 hover:bg-gray-600"
