@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { execCommand } from '@/lib/ytdlp'
+import { execArgs } from '@/lib/ytdlp'
 
 export async function POST(req: Request): Promise<Response> {
   const body: unknown = await req.json().catch(() => ({}))
@@ -11,6 +11,9 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ error: 'Missing path' }, { status: 400 })
   }
 
-  await execCommand(`explorer.exe "${folderPath}"`)
+  const result = await execArgs(['explorer.exe', folderPath])
+  if (result.code !== 0) {
+    return NextResponse.json({ error: result.stderr || 'Failed to open folder' }, { status: 500 })
+  }
   return NextResponse.json({ ok: true })
 }
