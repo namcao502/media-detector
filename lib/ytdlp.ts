@@ -155,8 +155,25 @@ export function ensureOutputDir(): string {
   return dir
 }
 
+const FFMPEG_EXE = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
+
+// A repo-local ffmpeg lets users vendor the binary instead of installing it
+// system-wide: drop ffmpeg + ffprobe into <repo>/bin. Returns the dir or null.
+export function bundledFfmpegDir(): string | null {
+  const dir = path.join(process.cwd(), 'bin')
+  return fs.existsSync(path.join(dir, FFMPEG_EXE)) ? dir : null
+}
+
+// Point yt-dlp at the bundled ffmpeg/ffprobe when present; [] otherwise (uses PATH).
+export function ffmpegLocationArgs(): string[] {
+  const dir = bundledFfmpegDir()
+  return dir ? ['--ffmpeg-location', dir] : []
+}
+
 export async function checkFfmpeg(): Promise<{ found: boolean; version: string | null }> {
-  const result = await execCommand('ffmpeg -version')
+  const dir = bundledFfmpegDir()
+  const cmd = dir ? `"${path.join(dir, FFMPEG_EXE)}" -version` : 'ffmpeg -version'
+  const result = await execCommand(cmd)
   if (result.code !== 0) return { found: false, version: null }
   const match = result.stdout.match(/ffmpeg version (\S+)/)
   return { found: true, version: match ? match[1] : null }

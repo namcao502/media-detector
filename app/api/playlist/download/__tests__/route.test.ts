@@ -8,6 +8,7 @@ jest.mock('@/lib/ytdlp', () => ({
   initialPlaylistState: jest.requireActual('@/lib/ytdlp').initialPlaylistState,
   checkFfmpeg: jest.fn().mockResolvedValue({ found: false, version: null }),
   metadataArgs: jest.requireActual('@/lib/ytdlp').metadataArgs,
+  ffmpegLocationArgs: jest.requireActual('@/lib/ytdlp').ffmpegLocationArgs,
 }))
 jest.mock('@/lib/validate', () => ({ isYouTubeUrl: jest.fn().mockReturnValue(true) }))
 

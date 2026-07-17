@@ -2,7 +2,7 @@ import {
   parseProgress, parseMediaInfo, resolveOutputDir, parseDestination,
   parsePlaylistItem, parsePlaylistInfo,
   reducePlaylistLine, finalizePlaylist, initialPlaylistState,
-  metadataArgs,
+  metadataArgs, bundledFfmpegDir, ffmpegLocationArgs,
 } from '../ytdlp'
 import type { PlaylistDownloadLine, PlaylistBatchDoneLine } from '@/types/media'
 import path from 'path'
@@ -89,6 +89,14 @@ describe('resolveOutputDir', () => {
     const dir = resolveOutputDir()
     expect(dir).toContain('MediaDetector')
     expect(path.isAbsolute(dir)).toBe(true)
+  })
+})
+
+describe('bundledFfmpegDir / ffmpegLocationArgs', () => {
+  it('returns null / [] when no repo-local ffmpeg is vendored', () => {
+    // No bin/ffmpeg(.exe) exists in the repo by default.
+    expect(bundledFfmpegDir()).toBeNull()
+    expect(ffmpegLocationArgs()).toEqual([])
   })
 })
 

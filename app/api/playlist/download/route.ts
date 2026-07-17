@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import path from 'path'
-import { streamCommand, ensureOutputDir, reducePlaylistLine, finalizePlaylist, initialPlaylistState, checkFfmpeg, metadataArgs } from '@/lib/ytdlp'
+import { streamCommand, ensureOutputDir, reducePlaylistLine, finalizePlaylist, initialPlaylistState, checkFfmpeg, metadataArgs, ffmpegLocationArgs } from '@/lib/ytdlp'
 import { isYouTubeUrl } from '@/lib/validate'
 import type { PlaylistDownloadLine } from '@/types/media'
 
@@ -16,7 +16,7 @@ export async function POST(req: Request): Promise<Response> {
 
   const outputDir = ensureOutputDir()
   const outputTemplate = path.join(outputDir, '%(playlist_title)s', '%(playlist_index)02d - %(title)s.%(ext)s')
-  const meta = metadataArgs((await checkFfmpeg()).found)
+  const meta = [...ffmpegLocationArgs(), ...metadataArgs((await checkFfmpeg()).found)]
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({

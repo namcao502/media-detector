@@ -29,7 +29,7 @@ The app requires two external tools at runtime:
 |------|-------|---------|-----------|
 | Python 3.8+ | `python --version` or `python3 --version` | Manual -- user installs from python.org | Yes |
 | yt-dlp | `yt-dlp --version` | Automatic -- app installs via `pip install yt-dlp` (and updates the same way) | Yes |
-| ffmpeg | `ffmpeg -version` | Manual -- user installs from ffmpeg.org | Optional |
+| ffmpeg | `ffmpeg -version` (or `bin/ffmpeg`) | Manual -- system PATH, or vendor `ffmpeg`+`ffprobe` into `bin/` (see `bin/README.md`) | Optional |
 
 The `/api/status` route checks all three on startup, auto-updates yt-dlp, and caches the result. The UI is disabled until Python + yt-dlp are present. **ffmpeg is optional**: downloads work without it, but embedding metadata + cover art needs it (see Metadata embedding). yt-dlp is a pip/PyPI install, so it is updated with `pip install --upgrade yt-dlp`, not the `yt-dlp -U` self-updater (which refuses for pip installs).
 
@@ -111,6 +111,8 @@ Both download routes call `metadataArgs((await checkFfmpeg()).found, ext?)` from
 - Playlist download omits `ext` and selects `bestaudio[ext=m4a]/bestaudio/best` -- preferring m4a (no re-encode) so cover art embeds reliably; bare `bestaudio` returns opus-in-webm which cannot hold a thumbnail.
 
 `checkFfmpeg()` is not cached -- it re-runs `ffmpeg -version` per call. The StatusBar `ffmpeg` row is a `warn` (not `error`) state when missing, since it does not block downloads.
+
+**Vendored ffmpeg:** `bundledFfmpegDir()` returns `<repo>/bin` if it contains an `ffmpeg` binary, else null. When present, `checkFfmpeg()` runs that binary and the download routes prepend `ffmpegLocationArgs()` (`--ffmpeg-location <repo>/bin`) so yt-dlp uses the vendored `ffmpeg`+`ffprobe` instead of PATH. This lets users drop the binaries into `bin/` with no system install. `bin/*` is gitignored except `README.md`.
 
 ### Playlist audio download
 
