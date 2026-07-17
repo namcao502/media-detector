@@ -3,7 +3,7 @@ import { promisify } from 'util'
 import path from 'path'
 import os from 'os'
 import fs from 'fs'
-import type { MediaInfo, VideoFormat, AudioFormat } from '@/types/media'
+import type { MediaInfo, VideoFormat, AudioFormat, PlaylistInfo, PlaylistDownloadLine } from '@/types/media'
 
 const execAsync = promisify(nodeExec)
 
@@ -153,4 +153,83 @@ export function ensureOutputDir(): string {
   const dir = resolveOutputDir()
   fs.mkdirSync(dir, { recursive: true })
   return dir
+}
+
+export function parsePlaylistItem(line: string): { index: number; total: number } | null {
+  const m = line.match(/Downloading (?:item|video) (\d+) of (\d+)/)
+  if (!m) return null
+  return { index: parseInt(m[1], 10), total: parseInt(m[2], 10) }
+}
+
+export function parsePlaylistInfo(jsonStr: string): PlaylistInfo {
+  const raw = JSON.parse(jsonStr)
+  const entries: Array<{ title?: string | null } | null> = raw.entries ?? []
+  const tracks = entries.map((e, i) => ({ index: i + 1, title: e?.title ?? `Track ${i + 1}` }))
+  return { title: raw.title ?? 'Playlist', count: tracks.length, tracks }
+}
+
+export interface PlaylistDlState {
+  index: number | null // current track (1-based), null before first item
+  total: number
+  dest: string | null // destination path of current track, null until announced
+  downloaded: number // tracks that completed with a destination
+  lastFolder: string | null
+}
+
+export const initialPlaylistState: PlaylistDlState = {
+  index: null, total: 0, dest: null, downloaded: 0, lastFolder: null,
+}
+
+// Pure reducer: fold one yt-dlp output line into state + emitted stream lines.
+export function reducePlaylistLine(
+  state: PlaylistDlState,
+  line: string,
+): { state: PlaylistDlState; emits: PlaylistDownloadLine[] } {
+  const emits: PlaylistDownloadLine[] = []
+
+  const item = parsePlaylistItem(line)
+  if (item) {
+    let downloaded = state.downloaded
+    if (state.index !== null && state.dest) {
+      emits.push({ type: 'track-done', index: state.index, savedPath: state.dest })
+      downloaded += 1
+    }
+    emits.push({ type: 'item', index: item.index, total: item.total })
+    return { state: { ...state, index: item.index, total: item.total, dest: null, downloaded }, emits }
+  }
+
+  const dest = parseDestination(line)
+  if (dest) {
+    return { state: { ...state, dest, lastFolder: path.dirname(dest) }, emits }
+  }
+
+  const percent = parseProgress(line)
+  if (percent !== null) {
+    emits.push({ type: 'progress', percent })
+    return { state, emits }
+  }
+
+  return { state, emits }
+}
+
+// Flush the final track and emit the batch summary.
+export function finalizePlaylist(
+  state: PlaylistDlState,
+  fallbackFolder: string,
+): PlaylistDownloadLine[] {
+  const emits: PlaylistDownloadLine[] = []
+  let downloaded = state.downloaded
+  if (state.index !== null && state.dest) {
+    emits.push({ type: 'track-done', index: state.index, savedPath: state.dest })
+    downloaded += 1
+  }
+  const total = state.total || downloaded
+  emits.push({
+    type: 'done',
+    folder: state.lastFolder ?? fallbackFolder,
+    downloaded,
+    total,
+    failed: Math.max(0, total - downloaded),
+  })
+  return emits
 }

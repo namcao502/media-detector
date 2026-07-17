@@ -10,6 +10,17 @@ Next.js 16 App Router app that detects and downloads video/audio from YouTube an
 
 ---
 
+## Commands
+
+```bash
+npm run dev      # dev server (Turbopack), http://localhost:3000
+npm run build    # production build
+npm start        # serve production build
+npm test         # all tests (see Testing below for single-file + typecheck)
+```
+
+---
+
 ## External Dependencies
 
 The app requires two external tools at runtime:
@@ -32,6 +43,8 @@ app/page.tsx                  -- main page (client component)
 
 app/api/detect/route.ts       -- POST: media info via yt-dlp --dump-json
 app/api/download/route.ts     -- POST: streaming download, emits NDJSON
+app/api/playlist/route.ts          -- POST: playlist metadata via --flat-playlist --dump-single-json
+app/api/playlist/download/route.ts -- POST: streaming playlist audio download, emits NDJSON
 app/api/status/route.ts       -- GET: Python + yt-dlp health check; cached
 app/api/ytdlp/install/route.ts -- POST: pip install yt-dlp (streamed)
 app/api/ytdlp/update/route.ts  -- POST: yt-dlp -U (streamed)
@@ -43,6 +56,10 @@ lib/validate.ts               -- isYouTubeUrl (allowlist: youtube.com, music.you
 types/media.ts                -- shared types: MediaInfo, VideoFormat, AudioFormat,
                                  StatusResult, DownloadStreamLine
 
+hooks/useTheme.ts             -- accent-color + rainbow theme controls (see Theme System)
+
+components/ThemeButton.tsx    -- accent preset picker + rainbow toggle (uses useTheme)
+components/PlaylistPanel.tsx  -- playlist track list + "Download all audio" + overall/per-track progress
 components/StatusBar.tsx      -- one row per dep: dot + label + message + optional action button
 components/UrlInput.tsx       -- URL form
 components/MediaInfo.tsx      -- thumbnail, title, channel, duration
@@ -85,21 +102,33 @@ Always call `isYouTubeUrl(url)` before passing a URL to yt-dlp. Accepted hosts: 
 
 Downloads go to `~/Documents/MediaDetector`. Use `ensureOutputDir()` from `lib/ytdlp.ts` -- it creates the dir if missing and returns the path.
 
+### Playlist audio download
+
+`getYouTubeUrlKind(url)` in `lib/validate.ts` classifies a URL as video and/or playlist (`list=` param, excluding `RD*` radio/mix). The page fires `/api/detect` and `/api/playlist` in parallel, so a watch+list URL shows both flows. Playlist download runs ONE yt-dlp process (`-f bestaudio/best --yes-playlist --ignore-errors`, no ffmpeg -- files keep their source container); `lib/ytdlp.ts` turns its stdout into stream lines via the pure `reducePlaylistLine`/`finalizePlaylist` pair (unit-tested without spawning yt-dlp). Playlist stream line types: `item`, `progress`, `track-done`, `done`, `error`.
+
 ---
 
 ## Theme System
 
-CSS custom properties in `app/globals.css`: `:root` (light) + `@media (prefers-color-scheme: dark)`. Follows OS automatically, no toggle.
+CSS custom properties in `app/globals.css`: `:root` (light) + `@media (prefers-color-scheme: dark)`. Light/dark follows the OS.
 
 Components use inline `style` props with `var(--token)`. Never use hardcoded Tailwind color classes (`bg-gray-800`, `text-red-300`, etc.).
 
 Key tokens: `--bg-page`, `--bg-card`, `--bg-input`, `--border`, `--text-primary`, `--text-secondary`, `--text-muted`, `--accent`, `--status-ok`, `--status-error`, `--status-warn`, plus `--bg-status-{error,warn}`, `--border-status-{error,warn}`, `--text-status-{error,warn}(-title)`.
 
+### Accent theming (`hooks/useTheme.ts`)
+
+`useTheme()` lets the user override the accent color at runtime; `ThemeButton` is the UI. It does NOT edit `globals.css` -- it sets inline vars on `document.documentElement`, so those win over the stylesheet:
+
+- Derives `--accent`, `--accent-hover`, and the `--bg-*`/`--border` tokens from one hex accent (HSL math), recomputed for the current light/dark mode.
+- Rainbow mode (default on) animates the hue via `requestAnimationFrame`; a preset click turns it off.
+- Persists to `localStorage` (`theme-accent`, `theme-rainbow`); storage writes are wrapped in try/catch (private browsing / quota).
+
 ---
 
 ## Testing
 
-Jest: `jsdom` for `components/__tests__/`, `node` for `app/api/**/` and `lib/__tests__/`.
+Two Jest projects (`jest.config.ts`): `jsdom` for `components/**` + `hooks/**`, `node` for `app/api/**`, `lib/**`, and `types/**`. Put a test in the right dir or it runs in the wrong environment.
 
 ```bash
 npx jest path/to/test --no-coverage  # single file

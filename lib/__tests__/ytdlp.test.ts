@@ -1,4 +1,9 @@
-import { parseProgress, parseMediaInfo, resolveOutputDir, parseDestination } from '../ytdlp'
+import {
+  parseProgress, parseMediaInfo, resolveOutputDir, parseDestination,
+  parsePlaylistItem, parsePlaylistInfo,
+  reducePlaylistLine, finalizePlaylist, initialPlaylistState,
+} from '../ytdlp'
+import type { PlaylistDownloadLine, PlaylistBatchDoneLine } from '@/types/media'
 import path from 'path'
 
 describe('parseProgress', () => {
@@ -83,5 +88,77 @@ describe('resolveOutputDir', () => {
     const dir = resolveOutputDir()
     expect(dir).toContain('MediaDetector')
     expect(path.isAbsolute(dir)).toBe(true)
+  })
+})
+
+describe('parsePlaylistItem', () => {
+  it('parses "Downloading item N of M"', () => {
+    expect(parsePlaylistItem('[download] Downloading item 3 of 10')).toEqual({ index: 3, total: 10 })
+  })
+  it('parses legacy "Downloading video N of M"', () => {
+    expect(parsePlaylistItem('[download] Downloading video 1 of 5')).toEqual({ index: 1, total: 5 })
+  })
+  it('returns null for non-item lines', () => {
+    expect(parsePlaylistItem('[download] 50% of 3MiB')).toBeNull()
+  })
+})
+
+describe('parsePlaylistInfo', () => {
+  it('extracts title, count, and indexed tracks', () => {
+    const json = JSON.stringify({ title: 'Mix', entries: [{ title: 'A' }, { title: 'B' }] })
+    const info = parsePlaylistInfo(json)
+    expect(info.title).toBe('Mix')
+    expect(info.count).toBe(2)
+    expect(info.tracks).toEqual([{ index: 1, title: 'A' }, { index: 2, title: 'B' }])
+  })
+  it('uses placeholder title for null/untitled entries', () => {
+    const json = JSON.stringify({ title: 'Mix', entries: [null, { title: 'B' }] })
+    const info = parsePlaylistInfo(json)
+    expect(info.tracks[0]).toEqual({ index: 1, title: 'Track 1' })
+  })
+})
+
+describe('reducePlaylistLine + finalizePlaylist', () => {
+  it('aggregates a two-track run into item/track-done/done events', () => {
+    const lines = [
+      '[download] Downloading item 1 of 2',
+      '[download] Destination: C:\\out\\Mix\\01 - A.m4a',
+      '[download] 100% of 3MiB',
+      '[download] Downloading item 2 of 2',
+      '[download] Destination: C:\\out\\Mix\\02 - B.m4a',
+      '[download] 100% of 3MiB',
+    ]
+    let state = initialPlaylistState
+    const emits: PlaylistDownloadLine[] = []
+    for (const line of lines) {
+      const r = reducePlaylistLine(state, line)
+      state = r.state
+      emits.push(...r.emits)
+    }
+    emits.push(...finalizePlaylist(state, 'C:\\out'))
+
+    expect(emits.filter((e) => e.type === 'item')).toHaveLength(2)
+    expect(emits.filter((e) => e.type === 'track-done')).toHaveLength(2)
+    const done = emits.find((e) => e.type === 'done') as PlaylistBatchDoneLine
+    expect(done.downloaded).toBe(2)
+    expect(done.total).toBe(2)
+    expect(done.failed).toBe(0)
+    expect(done.folder).toContain('Mix')
+  })
+
+  it('counts a skipped track (no destination) as failed', () => {
+    const lines = [
+      '[download] Downloading item 1 of 2',
+      '[download] Destination: C:\\out\\Mix\\01 - A.m4a',
+      '[download] 100% of 3MiB',
+      '[download] Downloading item 2 of 2', // item 2 fails: no Destination follows
+    ]
+    let state = initialPlaylistState
+    for (const line of lines) state = reducePlaylistLine(state, line).state
+    const finals = finalizePlaylist(state, 'C:\\out')
+    const done = finals.find((e) => e.type === 'done') as PlaylistBatchDoneLine
+    expect(done.downloaded).toBe(1)
+    expect(done.total).toBe(2)
+    expect(done.failed).toBe(1)
   })
 })

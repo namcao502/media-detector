@@ -56,3 +56,43 @@ export interface DownloadErrorLine {
 }
 
 export type DownloadStreamLine = DownloadProgressLine | DownloadDoneLine | DownloadErrorLine
+
+export interface PlaylistTrack {
+  index: number // 1-based position in the playlist
+  title: string
+}
+
+export interface PlaylistInfo {
+  title: string
+  count: number
+  tracks: PlaylistTrack[]
+}
+
+export interface PlaylistItemLine {
+  type: 'item'
+  index: number
+  total: number
+}
+
+export interface PlaylistTrackDoneLine {
+  type: 'track-done'
+  index: number
+  savedPath: string
+}
+
+export interface PlaylistBatchDoneLine {
+  type: 'done'
+  folder: string
+  downloaded: number
+  total: number
+  failed: number
+}
+
+// Reuses DownloadProgressLine ({type:'progress',percent}) for the current track
+// and DownloadErrorLine ({type:'error',message}) for a fatal spawn error.
+export type PlaylistDownloadLine =
+  | DownloadProgressLine
+  | PlaylistItemLine
+  | PlaylistTrackDoneLine
+  | PlaylistBatchDoneLine
+  | DownloadErrorLine
