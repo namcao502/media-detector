@@ -29,7 +29,7 @@ The app requires two external tools at runtime:
 |------|-------|---------|-----------|
 | Python 3.8+ | `python --version` or `python3 --version` | Manual -- user installs from python.org | Yes |
 | yt-dlp | `yt-dlp --version` | Automatic -- app installs via `pip install yt-dlp` (and updates the same way) | Yes |
-| ffmpeg | `ffmpeg -version` (or `bin/ffmpeg`) | Manual -- system PATH, or vendor `ffmpeg`+`ffprobe` into `bin/` (see `bin/README.md`) | Optional |
+| ffmpeg (+ ffprobe) | `ffmpeg -version` (also probes `bin/`, winget/choco shim dirs) | In-app button (`winget`/`choco`), system PATH, or vendor `ffmpeg`+`ffprobe` into `bin/` (see `bin/README.md`) | Optional |
 
 The `/api/status` route checks all three on startup, auto-updates yt-dlp, and caches the result. The UI is disabled until Python + yt-dlp are present. **ffmpeg is optional**: downloads work without it, but embedding metadata + cover art needs it (see Metadata embedding). yt-dlp is a pip/PyPI install, so it is updated with `pip install --upgrade yt-dlp`, not the `yt-dlp -U` self-updater (which refuses for pip installs).
 
@@ -48,7 +48,8 @@ app/api/playlist/route.ts          -- POST: playlist metadata via --flat-playlis
 app/api/playlist/download/route.ts -- POST: streaming playlist audio download, emits NDJSON
 app/api/status/route.ts       -- GET: Python + yt-dlp health check; cached
 app/api/ytdlp/install/route.ts -- POST: pip install yt-dlp (streamed)
-app/api/ytdlp/update/route.ts  -- POST: yt-dlp -U (streamed)
+app/api/ytdlp/update/route.ts  -- POST: yt-dlp update via pip (streamed)
+app/api/ffmpeg/install/route.ts -- POST: install ffmpeg via winget/choco (streamed)
 app/api/open-folder/route.ts  -- POST: open Documents\MediaDetector in Explorer
 
 lib/ytdlp.ts                  -- all yt-dlp helpers (spawn, parse, output dir)
@@ -112,7 +113,7 @@ Both download routes call `metadataArgs((await checkFfmpeg()).found, ext?)` from
 
 `checkFfmpeg()` is not cached -- it re-runs `ffmpeg -version` per call. The StatusBar `ffmpeg` row is a `warn` (not `error`) state when missing, since it does not block downloads.
 
-**Vendored ffmpeg:** `bundledFfmpegDir()` returns `<repo>/bin` if it contains an `ffmpeg` binary, else null. When present, `checkFfmpeg()` runs that binary and the download routes prepend `ffmpegLocationArgs()` (`--ffmpeg-location <repo>/bin`) so yt-dlp uses the vendored `ffmpeg`+`ffprobe` instead of PATH. This lets users drop the binaries into `bin/` with no system install. `bin/*` is gitignored except `README.md`.
+**ffmpeg resolution:** `resolveFfmpegDir()` returns the first dir containing an `ffmpeg` binary from: repo-local `bin/`, winget's `Links` shim dir, then Chocolatey's `bin`. When it returns a dir, `checkFfmpeg()` runs that binary and the download routes prepend `ffmpegLocationArgs()` (`--ffmpeg-location <dir>`) so yt-dlp uses that `ffmpeg`+`ffprobe`; otherwise it falls back to PATH. Probing the winget/choco shim dirs lets an in-app `/api/ffmpeg/install` (winget, choco fallback) be detected on the next status refresh without restarting the dev server (whose PATH snapshot is stale). Users can also drop binaries into `bin/` with no install. `bin/*` is gitignored except `README.md`.
 
 ### Playlist audio download
 

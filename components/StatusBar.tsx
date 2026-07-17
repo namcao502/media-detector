@@ -221,19 +221,29 @@ export default function StatusBar({ status, onRefresh }: StatusBarProps) {
     ffmpegState = 'warn'
     ffmpegMessage = 'Not found -- install ffmpeg to embed metadata & cover art'
     ffmpegAction = (
-      <a
-        href="https://ffmpeg.org/download.html"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="rounded px-3 py-1.5 text-xs font-semibold hover:opacity-80"
-        style={{
-          background: 'var(--bg-input)',
-          color: 'var(--text-secondary)',
-          border: '1px solid var(--border)',
-        }}
-      >
-        ffmpeg.org &rarr;
-      </a>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => handleInstall('/api/ffmpeg/install')}
+          disabled={loading}
+          className="rounded px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+          style={{ background: 'var(--accent)' }}
+        >
+          {loading ? 'Installing...' : 'Install'}
+        </button>
+        <a
+          href="https://www.gyan.dev/ffmpeg/builds/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded px-3 py-1.5 text-xs font-semibold hover:opacity-80"
+          style={{
+            background: 'var(--bg-input)',
+            color: 'var(--text-secondary)',
+            border: '1px solid var(--border)',
+          }}
+        >
+          manual &rarr;
+        </a>
+      </div>
     )
   }
 

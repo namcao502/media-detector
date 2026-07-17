@@ -157,21 +157,40 @@ export function ensureOutputDir(): string {
 
 const FFMPEG_EXE = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
 
-// A repo-local ffmpeg lets users vendor the binary instead of installing it
-// system-wide: drop ffmpeg + ffprobe into <repo>/bin. Returns the dir or null.
-export function bundledFfmpegDir(): string | null {
-  const dir = path.join(process.cwd(), 'bin')
-  return fs.existsSync(path.join(dir, FFMPEG_EXE)) ? dir : null
+// Returns the first dir that contains an ffmpeg binary, or null. Pure -- testable.
+export function firstDirWithFfmpeg(dirs: string[]): string | null {
+  for (const dir of dirs) {
+    if (fs.existsSync(path.join(dir, FFMPEG_EXE))) return dir
+  }
+  return null
 }
 
-// Point yt-dlp at the bundled ffmpeg/ffprobe when present; [] otherwise (uses PATH).
+// Dirs to look for a vendored / package-manager-installed ffmpeg, in priority order:
+// repo-local bin/, then winget's shim dir, then Chocolatey's shim dir. Checking the
+// shim dirs lets a `winget`/`choco` install be detected without restarting the dev
+// server, whose PATH snapshot would not yet include the new install.
+function ffmpegDirCandidates(): string[] {
+  const dirs = [path.join(process.cwd(), 'bin')]
+  if (process.platform === 'win32') {
+    const local = process.env.LOCALAPPDATA
+    if (local) dirs.push(path.join(local, 'Microsoft', 'WinGet', 'Links'))
+    dirs.push('C:\\ProgramData\\chocolatey\\bin')
+  }
+  return dirs
+}
+
+export function resolveFfmpegDir(): string | null {
+  return firstDirWithFfmpeg(ffmpegDirCandidates())
+}
+
+// Point yt-dlp at the resolved ffmpeg/ffprobe dir when found; [] otherwise (uses PATH).
 export function ffmpegLocationArgs(): string[] {
-  const dir = bundledFfmpegDir()
+  const dir = resolveFfmpegDir()
   return dir ? ['--ffmpeg-location', dir] : []
 }
 
 export async function checkFfmpeg(): Promise<{ found: boolean; version: string | null }> {
-  const dir = bundledFfmpegDir()
+  const dir = resolveFfmpegDir()
   const cmd = dir ? `"${path.join(dir, FFMPEG_EXE)}" -version` : 'ffmpeg -version'
   const result = await execCommand(cmd)
   if (result.code !== 0) return { found: false, version: null }

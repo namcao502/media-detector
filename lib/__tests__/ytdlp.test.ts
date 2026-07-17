@@ -2,10 +2,12 @@ import {
   parseProgress, parseMediaInfo, resolveOutputDir, parseDestination,
   parsePlaylistItem, parsePlaylistInfo,
   reducePlaylistLine, finalizePlaylist, initialPlaylistState,
-  metadataArgs, bundledFfmpegDir, ffmpegLocationArgs,
+  metadataArgs, firstDirWithFfmpeg,
 } from '../ytdlp'
 import type { PlaylistDownloadLine, PlaylistBatchDoneLine } from '@/types/media'
 import path from 'path'
+import os from 'os'
+import fs from 'fs'
 
 describe('parseProgress', () => {
   it('parses a standard download progress line', () => {
@@ -92,11 +94,19 @@ describe('resolveOutputDir', () => {
   })
 })
 
-describe('bundledFfmpegDir / ffmpegLocationArgs', () => {
-  it('returns null / [] when no repo-local ffmpeg is vendored', () => {
-    // No bin/ffmpeg(.exe) exists in the repo by default.
-    expect(bundledFfmpegDir()).toBeNull()
-    expect(ffmpegLocationArgs()).toEqual([])
+describe('firstDirWithFfmpeg', () => {
+  it('returns the first dir containing an ffmpeg binary', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ff-'))
+    const exe = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
+    fs.writeFileSync(path.join(tmp, exe), '')
+    try {
+      expect(firstDirWithFfmpeg([path.join(os.tmpdir(), 'nope-xyz'), tmp])).toBe(tmp)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+  it('returns null when no dir contains ffmpeg', () => {
+    expect(firstDirWithFfmpeg([path.join(os.tmpdir(), 'nope-abc')])).toBeNull()
   })
 })
 

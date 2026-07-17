@@ -52,10 +52,11 @@ describe('StatusBar', () => {
     expect(screen.getByText(/metadata & thumbnails embedded/i)).toBeInTheDocument()
   })
 
-  it('shows ffmpeg.org link when ffmpeg is missing', () => {
+  it('shows Install button and manual link when ffmpeg is missing', () => {
     render(<StatusBar status={noFfmpeg} onRefresh={jest.fn()} />)
     expect(screen.getByText(/install ffmpeg to embed metadata/i)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /ffmpeg\.org/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /install/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /manual/i })).toBeInTheDocument()
   })
 
   it('shows python.org link when Python is missing', () => {
