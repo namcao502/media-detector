@@ -5,14 +5,17 @@ import StatusBar from '@/components/StatusBar'
 import UrlInput from '@/components/UrlInput'
 import MediaInfo from '@/components/MediaInfo'
 import FormatTabs from '@/components/FormatTabs'
-import type { MediaInfo as MediaInfoType, StatusResult } from '@/types/media'
+import type { MediaInfo as MediaInfoType, StatusResult, PlaylistInfo } from '@/types/media'
 import ThemeButton from '@/components/ThemeButton'
+import PlaylistPanel from '@/components/PlaylistPanel'
+import { getYouTubeUrlKind } from '@/lib/validate'
 import { useTheme } from '@/hooks/useTheme'
 
 export default function Home() {
   const [status, setStatus] = useState<StatusResult | null>(null)
   const [url, setUrl] = useState('')
   const [mediaInfo, setMediaInfo] = useState<MediaInfoType | null>(null)
+  const [playlistInfo, setPlaylistInfo] = useState<PlaylistInfo | null>(null)
   const [detecting, setDetecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const theme = useTheme()
@@ -34,12 +37,7 @@ export default function Home() {
     fetchStatus()
   }, [])
 
-  async function handleDetect(inputUrl: string) {
-    setUrl(inputUrl)
-    setError(null)
-    setMediaInfo(null)
-    setDetecting(true)
-
+  async function detectVideo(inputUrl: string) {
     try {
       const res = await fetch('/api/detect', {
         method: 'POST',
@@ -47,13 +45,45 @@ export default function Home() {
         body: JSON.stringify({ url: inputUrl }),
       })
       const data = await res.json()
-      if (!res.ok) {
-        setError(data.error ?? 'Detection failed')
-      } else {
-        setMediaInfo(data)
-      }
+      if (!res.ok) setError(data.error ?? 'Detection failed')
+      else setMediaInfo(data)
     } catch {
       setError('Network error. Is the server running?')
+    }
+  }
+
+  async function detectPlaylist(inputUrl: string) {
+    try {
+      const res = await fetch('/api/playlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: inputUrl }),
+      })
+      const data = await res.json()
+      if (res.ok) setPlaylistInfo(data)
+      // Playlist detection failure is non-fatal -- the single-video flow may still succeed.
+    } catch {
+      // ignore
+    }
+  }
+
+  async function handleDetect(inputUrl: string) {
+    setUrl(inputUrl)
+    setError(null)
+    setMediaInfo(null)
+    setPlaylistInfo(null)
+    setDetecting(true)
+
+    const kind = getYouTubeUrlKind(inputUrl)
+    try {
+      const tasks: Promise<void>[] = []
+      if (kind.hasVideo) tasks.push(detectVideo(inputUrl))
+      if (kind.hasPlaylist) tasks.push(detectPlaylist(inputUrl))
+      if (tasks.length === 0) {
+        setError('Enter a YouTube video or playlist link')
+        return
+      }
+      await Promise.all(tasks)
     } finally {
       setDetecting(false)
     }
@@ -108,6 +138,8 @@ export default function Home() {
           <FormatTabs info={mediaInfo} url={url} />
         </div>
       )}
+
+      {playlistInfo && <PlaylistPanel info={playlistInfo} url={url} />}
     </main>
   )
 }

@@ -42,3 +42,7 @@ next-env.d.ts
 
 # brainstorm files
 .superpowers/
+
+# vendored ffmpeg binaries (see bin/README.md) -- large, opt-in to committing
+/bin/*
+!/bin/README.md

@@ -3,7 +3,7 @@ import { promisify } from 'util'
 import path from 'path'
 import os from 'os'
 import fs from 'fs'
-import type { MediaInfo, VideoFormat, AudioFormat } from '@/types/media'
+import type { MediaInfo, VideoFormat, AudioFormat, PlaylistInfo, PlaylistDownloadLine } from '@/types/media'
 
 const execAsync = promisify(nodeExec)
 
@@ -153,4 +153,165 @@ export function ensureOutputDir(): string {
   const dir = resolveOutputDir()
   fs.mkdirSync(dir, { recursive: true })
   return dir
+}
+
+const FFMPEG_EXE = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
+
+// Returns the first dir that contains an ffmpeg binary, or null. Pure -- testable.
+export function firstDirWithFfmpeg(dirs: string[]): string | null {
+  for (const dir of dirs) {
+    if (fs.existsSync(path.join(dir, FFMPEG_EXE))) return dir
+  }
+  return null
+}
+
+// winget installs the Gyan.FFmpeg archive package under Packages/<pkg>/<ffmpeg-ver>/bin/
+// (nested, versioned) without a Links shim or PATH entry, so we discover that bin dir.
+function wingetFfmpegBinDirs(): string[] {
+  const local = process.env.LOCALAPPDATA
+  if (!local) return []
+  const pkgRoot = path.join(local, 'Microsoft', 'WinGet', 'Packages')
+  const out: string[] = []
+  try {
+    for (const pkg of fs.readdirSync(pkgRoot)) {
+      if (!/ffmpeg/i.test(pkg)) continue
+      const pkgDir = path.join(pkgRoot, pkg)
+      let subs: string[] = []
+      try { subs = fs.readdirSync(pkgDir) } catch { continue }
+      for (const sub of subs) out.push(path.join(pkgDir, sub, 'bin'))
+    }
+  } catch {
+    // Packages dir does not exist -- nothing installed via winget
+  }
+  return out
+}
+
+// Dirs to look for a vendored / package-manager-installed ffmpeg, in priority order:
+// repo-local bin/, winget's shim dir, Chocolatey's shim dir, then winget's extracted
+// package dirs. Checking these lets a `winget`/`choco` install be detected without
+// restarting the dev server, whose PATH snapshot would not yet include the new install.
+function ffmpegDirCandidates(): string[] {
+  const dirs = [path.join(process.cwd(), 'bin')]
+  if (process.platform === 'win32') {
+    const local = process.env.LOCALAPPDATA
+    if (local) dirs.push(path.join(local, 'Microsoft', 'WinGet', 'Links'))
+    dirs.push('C:\\ProgramData\\chocolatey\\bin')
+    dirs.push(...wingetFfmpegBinDirs())
+  }
+  return dirs
+}
+
+export function resolveFfmpegDir(): string | null {
+  return firstDirWithFfmpeg(ffmpegDirCandidates())
+}
+
+// Point yt-dlp at the resolved ffmpeg/ffprobe dir when found; [] otherwise (uses PATH).
+export function ffmpegLocationArgs(): string[] {
+  const dir = resolveFfmpegDir()
+  return dir ? ['--ffmpeg-location', dir] : []
+}
+
+export async function checkFfmpeg(): Promise<{ found: boolean; version: string | null }> {
+  const dir = resolveFfmpegDir()
+  const cmd = dir ? `"${path.join(dir, FFMPEG_EXE)}" -version` : 'ffmpeg -version'
+  const result = await execCommand(cmd)
+  if (result.code !== 0) return { found: false, version: null }
+  const match = result.stdout.match(/ffmpeg version (\S+)/)
+  return { found: true, version: match ? match[1] : null }
+}
+
+// Containers yt-dlp can embed a cover-art thumbnail into. Notably NOT webm --
+// passing --embed-thumbnail for a webm output makes yt-dlp error in postprocessing.
+const THUMBNAIL_EXTS = new Set(['mp3', 'mkv', 'mka', 'ogg', 'opus', 'flac', 'm4a', 'mp4', 'm4v', 'mov'])
+
+// yt-dlp postprocessors that embed metadata/cover art/chapters all require ffmpeg.
+// Returns [] when ffmpeg is absent so the download still succeeds (just without tags).
+// Text metadata + chapters embed into any container; thumbnail is gated on `ext`
+// (omit ext for playlist downloads where we select an m4a-preferring format).
+export function metadataArgs(hasFfmpeg: boolean, ext?: string): string[] {
+  if (!hasFfmpeg) return []
+  const args = ['--embed-metadata', '--embed-chapters']
+  if (ext === undefined || THUMBNAIL_EXTS.has(ext.toLowerCase())) {
+    args.push('--embed-thumbnail')
+  }
+  return args
+}
+
+export function parsePlaylistItem(line: string): { index: number; total: number } | null {
+  const m = line.match(/Downloading (?:item|video) (\d+) of (\d+)/)
+  if (!m) return null
+  return { index: parseInt(m[1], 10), total: parseInt(m[2], 10) }
+}
+
+export function parsePlaylistInfo(jsonStr: string): PlaylistInfo {
+  const raw = JSON.parse(jsonStr)
+  const entries: Array<{ title?: string | null } | null> = raw.entries ?? []
+  const tracks = entries.map((e, i) => ({ index: i + 1, title: e?.title ?? `Track ${i + 1}` }))
+  return { title: raw.title ?? 'Playlist', count: tracks.length, tracks }
+}
+
+export interface PlaylistDlState {
+  index: number | null // current track (1-based), null before first item
+  total: number
+  dest: string | null // destination path of current track, null until announced
+  downloaded: number // tracks that completed with a destination
+  lastFolder: string | null
+}
+
+export const initialPlaylistState: PlaylistDlState = {
+  index: null, total: 0, dest: null, downloaded: 0, lastFolder: null,
+}
+
+// Pure reducer: fold one yt-dlp output line into state + emitted stream lines.
+export function reducePlaylistLine(
+  state: PlaylistDlState,
+  line: string,
+): { state: PlaylistDlState; emits: PlaylistDownloadLine[] } {
+  const emits: PlaylistDownloadLine[] = []
+
+  const item = parsePlaylistItem(line)
+  if (item) {
+    let downloaded = state.downloaded
+    if (state.index !== null && state.dest) {
+      emits.push({ type: 'track-done', index: state.index, savedPath: state.dest })
+      downloaded += 1
+    }
+    emits.push({ type: 'item', index: item.index, total: item.total })
+    return { state: { ...state, index: item.index, total: item.total, dest: null, downloaded }, emits }
+  }
+
+  const dest = parseDestination(line)
+  if (dest) {
+    return { state: { ...state, dest, lastFolder: path.dirname(dest) }, emits }
+  }
+
+  const percent = parseProgress(line)
+  if (percent !== null) {
+    emits.push({ type: 'progress', percent })
+    return { state, emits }
+  }
+
+  return { state, emits }
+}
+
+// Flush the final track and emit the batch summary.
+export function finalizePlaylist(
+  state: PlaylistDlState,
+  fallbackFolder: string,
+): PlaylistDownloadLine[] {
+  const emits: PlaylistDownloadLine[] = []
+  let downloaded = state.downloaded
+  if (state.index !== null && state.dest) {
+    emits.push({ type: 'track-done', index: state.index, savedPath: state.dest })
+    downloaded += 1
+  }
+  const total = state.total || downloaded
+  emits.push({
+    type: 'done',
+    folder: state.lastFolder ?? fallbackFolder,
+    downloaded,
+    total,
+    failed: Math.max(0, total - downloaded),
+  })
+  return emits
 }

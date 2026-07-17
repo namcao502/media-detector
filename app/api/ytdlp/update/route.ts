@@ -5,7 +5,8 @@ export async function POST(): Promise<Response> {
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        for await (const line of streamCommand(['yt-dlp', '-U'])) {
+        // yt-dlp -U self-update refuses for pip/PyPI installs; update the way it was installed.
+        for await (const line of streamCommand(['pip', 'install', '--upgrade', 'yt-dlp'])) {
           controller.enqueue(encoder.encode(line + '\n'))
         }
       } finally {

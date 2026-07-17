@@ -5,21 +5,31 @@ import type { StatusResult } from '@/types/media'
 const allGood: StatusResult = {
   python: { found: true, version: '3.12.2' },
   ytdlp: { found: true, version: '2025.04.15', updateStatus: 'up-to-date' },
+  ffmpeg: { found: true, version: '7.1' },
 }
 
 const noPython: StatusResult = {
   python: { found: false, version: null },
   ytdlp: { found: false, version: null, updateStatus: 'skipped' },
+  ffmpeg: { found: false, version: null },
 }
 
 const noYtdlp: StatusResult = {
   python: { found: true, version: '3.12.2' },
   ytdlp: { found: false, version: null, updateStatus: 'skipped' },
+  ffmpeg: { found: true, version: '7.1' },
 }
 
 const ytdlpUpdateFailed: StatusResult = {
   python: { found: true, version: '3.12.2' },
   ytdlp: { found: true, version: '2025.04.15', updateStatus: 'failed' },
+  ffmpeg: { found: true, version: '7.1' },
+}
+
+const noFfmpeg: StatusResult = {
+  python: { found: true, version: '3.12.2' },
+  ytdlp: { found: true, version: '2025.04.15', updateStatus: 'up-to-date' },
+  ffmpeg: { found: false, version: null },
 }
 
 describe('StatusBar', () => {
@@ -33,12 +43,25 @@ describe('StatusBar', () => {
 
   it('shows loading rows when status is null', () => {
     render(<StatusBar status={null} onRefresh={jest.fn()} />)
-    expect(screen.getAllByText('Checking...')).toHaveLength(2)
+    expect(screen.getAllByText('Checking...')).toHaveLength(3)
+  })
+
+  it('shows ffmpeg version and metadata note when present', () => {
+    render(<StatusBar status={allGood} onRefresh={jest.fn()} />)
+    expect(screen.getByText('ffmpeg')).toBeInTheDocument()
+    expect(screen.getByText(/metadata & thumbnails embedded/i)).toBeInTheDocument()
+  })
+
+  it('shows Install button and manual link when ffmpeg is missing', () => {
+    render(<StatusBar status={noFfmpeg} onRefresh={jest.fn()} />)
+    expect(screen.getByText(/install ffmpeg to embed metadata/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /install/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /manual/i })).toBeInTheDocument()
   })
 
   it('shows python.org link when Python is missing', () => {
     render(<StatusBar status={noPython} onRefresh={jest.fn()} />)
-    expect(screen.getByText(/Not found/)).toBeInTheDocument()
+    expect(screen.getByText(/install Python 3.8/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /python\.org/i })).toBeInTheDocument()
   })
 

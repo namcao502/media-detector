@@ -10,16 +10,28 @@ Next.js 16 App Router app that detects and downloads video/audio from YouTube an
 
 ---
 
+## Commands
+
+```bash
+npm run dev      # dev server (Turbopack), http://localhost:3000
+npm run build    # production build
+npm start        # serve production build
+npm test         # all tests (see Testing below for single-file + typecheck)
+```
+
+---
+
 ## External Dependencies
 
 The app requires two external tools at runtime:
 
-| Tool | Check | Install |
-|------|-------|---------|
-| Python 3.8+ | `python --version` or `python3 --version` | Manual -- user installs from python.org |
-| yt-dlp | `yt-dlp --version` | Automatic -- app installs via `pip install yt-dlp` |
+| Tool | Check | Install | Required? |
+|------|-------|---------|-----------|
+| Python 3.8+ | `python --version` or `python3 --version` | Manual -- user installs from python.org | Yes |
+| yt-dlp | `yt-dlp --version` | Automatic -- app installs via `pip install yt-dlp` (and updates the same way) | Yes |
+| ffmpeg (+ ffprobe) | `ffmpeg -version` (also probes `bin/`, winget/choco shim dirs) | In-app button (`winget`/`choco`), system PATH, or vendor `ffmpeg`+`ffprobe` into `bin/` (see `bin/README.md`) | Optional |
 
-The `/api/status` route checks both on startup, auto-updates yt-dlp, and caches the result. The UI is disabled until both are present.
+The `/api/status` route checks all three on startup, auto-updates yt-dlp, and caches the result. The UI is disabled until Python + yt-dlp are present. **ffmpeg is optional**: downloads work without it, but embedding metadata + cover art needs it (see Metadata embedding). yt-dlp is a pip/PyPI install, so it is updated with `pip install --upgrade yt-dlp`, not the `yt-dlp -U` self-updater (which refuses for pip installs).
 
 ---
 
@@ -32,9 +44,12 @@ app/page.tsx                  -- main page (client component)
 
 app/api/detect/route.ts       -- POST: media info via yt-dlp --dump-json
 app/api/download/route.ts     -- POST: streaming download, emits NDJSON
+app/api/playlist/route.ts          -- POST: playlist metadata via --flat-playlist --dump-single-json
+app/api/playlist/download/route.ts -- POST: streaming playlist audio download, emits NDJSON
 app/api/status/route.ts       -- GET: Python + yt-dlp health check; cached
 app/api/ytdlp/install/route.ts -- POST: pip install yt-dlp (streamed)
-app/api/ytdlp/update/route.ts  -- POST: yt-dlp -U (streamed)
+app/api/ytdlp/update/route.ts  -- POST: yt-dlp update via pip (streamed)
+app/api/ffmpeg/install/route.ts -- POST: install ffmpeg via winget/choco (streamed)
 app/api/open-folder/route.ts  -- POST: open Documents\MediaDetector in Explorer
 
 lib/ytdlp.ts                  -- all yt-dlp helpers (spawn, parse, output dir)
@@ -43,6 +58,10 @@ lib/validate.ts               -- isYouTubeUrl (allowlist: youtube.com, music.you
 types/media.ts                -- shared types: MediaInfo, VideoFormat, AudioFormat,
                                  StatusResult, DownloadStreamLine
 
+hooks/useTheme.ts             -- accent-color + rainbow theme controls (see Theme System)
+
+components/ThemeButton.tsx    -- accent preset picker + rainbow toggle (uses useTheme)
+components/PlaylistPanel.tsx  -- playlist track list + "Download all audio" + overall/per-track progress
 components/StatusBar.tsx      -- one row per dep: dot + label + message + optional action button
 components/UrlInput.tsx       -- URL form
 components/MediaInfo.tsx      -- thumbnail, title, channel, duration
@@ -85,21 +104,44 @@ Always call `isYouTubeUrl(url)` before passing a URL to yt-dlp. Accepted hosts: 
 
 Downloads go to `~/Documents/MediaDetector`. Use `ensureOutputDir()` from `lib/ytdlp.ts` -- it creates the dir if missing and returns the path.
 
+### Metadata embedding
+
+Both download routes call `metadataArgs((await checkFfmpeg()).found, ext?)` from `lib/ytdlp.ts` and spread the result into the yt-dlp args. When ffmpeg is present it adds `--embed-metadata --embed-chapters` (text tags + chapters embed into any container, webm included) plus `--embed-thumbnail` **only for containers yt-dlp can embed cover art into** (`THUMBNAIL_EXTS`; webm is excluded, else yt-dlp errors in postprocessing). When ffmpeg is absent it returns `[]` so the download still succeeds untagged.
+
+- Single download passes the user-chosen `ext`, so a webm/opus pick gets tags + chapters but no cover art.
+- Playlist download omits `ext` and selects `bestaudio[ext=m4a]/bestaudio/best` -- preferring m4a (no re-encode) so cover art embeds reliably; bare `bestaudio` returns opus-in-webm which cannot hold a thumbnail.
+
+`checkFfmpeg()` is not cached -- it re-runs `ffmpeg -version` per call. The StatusBar `ffmpeg` row is a `warn` (not `error`) state when missing, since it does not block downloads.
+
+**ffmpeg resolution:** `resolveFfmpegDir()` returns the first dir containing an `ffmpeg` binary from: repo-local `bin/`, winget's `Links` shim dir, then Chocolatey's `bin`. When it returns a dir, `checkFfmpeg()` runs that binary and the download routes prepend `ffmpegLocationArgs()` (`--ffmpeg-location <dir>`) so yt-dlp uses that `ffmpeg`+`ffprobe`; otherwise it falls back to PATH. Probing the winget/choco shim dirs lets an in-app `/api/ffmpeg/install` (winget, choco fallback) be detected on the next status refresh without restarting the dev server (whose PATH snapshot is stale). Users can also drop binaries into `bin/` with no install. `bin/*` is gitignored except `README.md`.
+
+### Playlist audio download
+
+`getYouTubeUrlKind(url)` in `lib/validate.ts` classifies a URL as video and/or playlist (`list=` param, excluding `RD*` radio/mix). The page fires `/api/detect` and `/api/playlist` in parallel, so a watch+list URL shows both flows. Playlist download runs ONE yt-dlp process (`-f bestaudio/best --yes-playlist --ignore-errors`, no ffmpeg -- files keep their source container); `lib/ytdlp.ts` turns its stdout into stream lines via the pure `reducePlaylistLine`/`finalizePlaylist` pair (unit-tested without spawning yt-dlp). Playlist stream line types: `item`, `progress`, `track-done`, `done`, `error`.
+
 ---
 
 ## Theme System
 
-CSS custom properties in `app/globals.css`: `:root` (light) + `@media (prefers-color-scheme: dark)`. Follows OS automatically, no toggle.
+CSS custom properties in `app/globals.css`: `:root` (light) + `@media (prefers-color-scheme: dark)`. Light/dark follows the OS.
 
 Components use inline `style` props with `var(--token)`. Never use hardcoded Tailwind color classes (`bg-gray-800`, `text-red-300`, etc.).
 
 Key tokens: `--bg-page`, `--bg-card`, `--bg-input`, `--border`, `--text-primary`, `--text-secondary`, `--text-muted`, `--accent`, `--status-ok`, `--status-error`, `--status-warn`, plus `--bg-status-{error,warn}`, `--border-status-{error,warn}`, `--text-status-{error,warn}(-title)`.
 
+### Accent theming (`hooks/useTheme.ts`)
+
+`useTheme()` lets the user override the accent color at runtime; `ThemeButton` is the UI. It does NOT edit `globals.css` -- it sets inline vars on `document.documentElement`, so those win over the stylesheet:
+
+- Derives `--accent`, `--accent-hover`, and the `--bg-*`/`--border` tokens from one hex accent (HSL math), recomputed for the current light/dark mode.
+- Rainbow mode (default on) animates the hue via `requestAnimationFrame`; a preset click turns it off.
+- Persists to `localStorage` (`theme-accent`, `theme-rainbow`); storage writes are wrapped in try/catch (private browsing / quota).
+
 ---
 
 ## Testing
 
-Jest: `jsdom` for `components/__tests__/`, `node` for `app/api/**/` and `lib/__tests__/`.
+Two Jest projects (`jest.config.ts`): `jsdom` for `components/**` + `hooks/**`, `node` for `app/api/**`, `lib/**`, and `types/**`. Put a test in the right dir or it runs in the wrong environment.
 
 ```bash
 npx jest path/to/test --no-coverage  # single file

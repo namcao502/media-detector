@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { execCommand } from '@/lib/ytdlp'
+import { execCommand, checkFfmpeg } from '@/lib/ytdlp'
 import type { StatusResult, UpdateStatus } from '@/types/media'
 
 let cachedStatus: StatusResult | null = null
@@ -24,11 +24,12 @@ async function checkYtdlp(): Promise<{ found: boolean; version: string | null }>
 }
 
 async function updateYtdlp(): Promise<UpdateStatus> {
-  const result = await execCommand('yt-dlp -U')
+  // yt-dlp -U self-update refuses for pip/PyPI installs; update the way it was installed.
+  const result = await execCommand('pip install --upgrade yt-dlp')
   if (result.code !== 0) return 'failed'
   const out = result.stdout.toLowerCase()
-  if (out.includes('up to date') || out.includes('up-to-date')) return 'up-to-date'
-  return 'updated'
+  if (out.includes('successfully installed')) return 'updated'
+  return 'up-to-date' // "Requirement already satisfied"
 }
 
 export async function GET(req: Request): Promise<NextResponse> {
@@ -52,7 +53,10 @@ export async function GET(req: Request): Promise<NextResponse> {
     }
   }
 
-  cachedStatus = { python, ytdlp }
+  // ffmpeg is independent of Python -- check it regardless.
+  const ffmpeg = await checkFfmpeg()
+
+  cachedStatus = { python, ytdlp, ffmpeg }
   return NextResponse.json(cachedStatus)
 }
 
