@@ -165,16 +165,38 @@ export function firstDirWithFfmpeg(dirs: string[]): string | null {
   return null
 }
 
+// winget installs the Gyan.FFmpeg archive package under Packages/<pkg>/<ffmpeg-ver>/bin/
+// (nested, versioned) without a Links shim or PATH entry, so we discover that bin dir.
+function wingetFfmpegBinDirs(): string[] {
+  const local = process.env.LOCALAPPDATA
+  if (!local) return []
+  const pkgRoot = path.join(local, 'Microsoft', 'WinGet', 'Packages')
+  const out: string[] = []
+  try {
+    for (const pkg of fs.readdirSync(pkgRoot)) {
+      if (!/ffmpeg/i.test(pkg)) continue
+      const pkgDir = path.join(pkgRoot, pkg)
+      let subs: string[] = []
+      try { subs = fs.readdirSync(pkgDir) } catch { continue }
+      for (const sub of subs) out.push(path.join(pkgDir, sub, 'bin'))
+    }
+  } catch {
+    // Packages dir does not exist -- nothing installed via winget
+  }
+  return out
+}
+
 // Dirs to look for a vendored / package-manager-installed ffmpeg, in priority order:
-// repo-local bin/, then winget's shim dir, then Chocolatey's shim dir. Checking the
-// shim dirs lets a `winget`/`choco` install be detected without restarting the dev
-// server, whose PATH snapshot would not yet include the new install.
+// repo-local bin/, winget's shim dir, Chocolatey's shim dir, then winget's extracted
+// package dirs. Checking these lets a `winget`/`choco` install be detected without
+// restarting the dev server, whose PATH snapshot would not yet include the new install.
 function ffmpegDirCandidates(): string[] {
   const dirs = [path.join(process.cwd(), 'bin')]
   if (process.platform === 'win32') {
     const local = process.env.LOCALAPPDATA
     if (local) dirs.push(path.join(local, 'Microsoft', 'WinGet', 'Links'))
     dirs.push('C:\\ProgramData\\chocolatey\\bin')
+    dirs.push(...wingetFfmpegBinDirs())
   }
   return dirs
 }
