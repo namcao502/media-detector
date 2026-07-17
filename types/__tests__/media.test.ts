@@ -18,6 +18,7 @@ describe('media types', () => {
     const s: StatusResult = {
       python: { found: false, version: null },
       ytdlp: { found: false, version: null, updateStatus: 'skipped' },
+      ffmpeg: { found: false, version: null },
     }
     expect(s.python.found).toBe(false)
   })

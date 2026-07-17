@@ -31,6 +31,8 @@ export type UpdateStatus = 'updated' | 'up-to-date' | 'failed' | 'skipped'
 export interface StatusResult {
   python: { found: boolean; version: string | null }
   ytdlp: { found: boolean; version: string | null; updateStatus: UpdateStatus }
+  // Optional -- downloads work without it; required only to embed metadata + thumbnails.
+  ffmpeg: { found: boolean; version: string | null }
 }
 
 export interface DownloadRequest {

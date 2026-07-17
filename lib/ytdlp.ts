@@ -155,6 +155,30 @@ export function ensureOutputDir(): string {
   return dir
 }
 
+export async function checkFfmpeg(): Promise<{ found: boolean; version: string | null }> {
+  const result = await execCommand('ffmpeg -version')
+  if (result.code !== 0) return { found: false, version: null }
+  const match = result.stdout.match(/ffmpeg version (\S+)/)
+  return { found: true, version: match ? match[1] : null }
+}
+
+// Containers yt-dlp can embed a cover-art thumbnail into. Notably NOT webm --
+// passing --embed-thumbnail for a webm output makes yt-dlp error in postprocessing.
+const THUMBNAIL_EXTS = new Set(['mp3', 'mkv', 'mka', 'ogg', 'opus', 'flac', 'm4a', 'mp4', 'm4v', 'mov'])
+
+// yt-dlp postprocessors that embed metadata/cover art/chapters all require ffmpeg.
+// Returns [] when ffmpeg is absent so the download still succeeds (just without tags).
+// Text metadata + chapters embed into any container; thumbnail is gated on `ext`
+// (omit ext for playlist downloads where we select an m4a-preferring format).
+export function metadataArgs(hasFfmpeg: boolean, ext?: string): string[] {
+  if (!hasFfmpeg) return []
+  const args = ['--embed-metadata', '--embed-chapters']
+  if (ext === undefined || THUMBNAIL_EXTS.has(ext.toLowerCase())) {
+    args.push('--embed-thumbnail')
+  }
+  return args
+}
+
 export function parsePlaylistItem(line: string): { index: number; total: number } | null {
   const m = line.match(/Downloading (?:item|video) (\d+) of (\d+)/)
   if (!m) return null

@@ -2,6 +2,7 @@ import {
   parseProgress, parseMediaInfo, resolveOutputDir, parseDestination,
   parsePlaylistItem, parsePlaylistInfo,
   reducePlaylistLine, finalizePlaylist, initialPlaylistState,
+  metadataArgs,
 } from '../ytdlp'
 import type { PlaylistDownloadLine, PlaylistBatchDoneLine } from '@/types/media'
 import path from 'path'
@@ -88,6 +89,24 @@ describe('resolveOutputDir', () => {
     const dir = resolveOutputDir()
     expect(dir).toContain('MediaDetector')
     expect(path.isAbsolute(dir)).toBe(true)
+  })
+})
+
+describe('metadataArgs', () => {
+  it('returns [] when ffmpeg is absent', () => {
+    expect(metadataArgs(false, 'm4a')).toEqual([])
+  })
+  it('embeds metadata, chapters, and thumbnail for a supported container', () => {
+    expect(metadataArgs(true, 'm4a')).toEqual(['--embed-metadata', '--embed-chapters', '--embed-thumbnail'])
+  })
+  it('omits the thumbnail for webm (unsupported container)', () => {
+    const args = metadataArgs(true, 'webm')
+    expect(args).toContain('--embed-metadata')
+    expect(args).toContain('--embed-chapters')
+    expect(args).not.toContain('--embed-thumbnail')
+  })
+  it('includes the thumbnail when ext is omitted (playlist selects m4a)', () => {
+    expect(metadataArgs(true)).toContain('--embed-thumbnail')
   })
 })
 

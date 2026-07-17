@@ -25,12 +25,13 @@ npm test         # all tests (see Testing below for single-file + typecheck)
 
 The app requires two external tools at runtime:
 
-| Tool | Check | Install |
-|------|-------|---------|
-| Python 3.8+ | `python --version` or `python3 --version` | Manual -- user installs from python.org |
-| yt-dlp | `yt-dlp --version` | Automatic -- app installs via `pip install yt-dlp` |
+| Tool | Check | Install | Required? |
+|------|-------|---------|-----------|
+| Python 3.8+ | `python --version` or `python3 --version` | Manual -- user installs from python.org | Yes |
+| yt-dlp | `yt-dlp --version` | Automatic -- app installs via `pip install yt-dlp` (and updates the same way) | Yes |
+| ffmpeg | `ffmpeg -version` | Manual -- user installs from ffmpeg.org | Optional |
 
-The `/api/status` route checks both on startup, auto-updates yt-dlp, and caches the result. The UI is disabled until both are present.
+The `/api/status` route checks all three on startup, auto-updates yt-dlp, and caches the result. The UI is disabled until Python + yt-dlp are present. **ffmpeg is optional**: downloads work without it, but embedding metadata + cover art needs it (see Metadata embedding). yt-dlp is a pip/PyPI install, so it is updated with `pip install --upgrade yt-dlp`, not the `yt-dlp -U` self-updater (which refuses for pip installs).
 
 ---
 
@@ -101,6 +102,15 @@ Always call `isYouTubeUrl(url)` before passing a URL to yt-dlp. Accepted hosts: 
 ### Output directory
 
 Downloads go to `~/Documents/MediaDetector`. Use `ensureOutputDir()` from `lib/ytdlp.ts` -- it creates the dir if missing and returns the path.
+
+### Metadata embedding
+
+Both download routes call `metadataArgs((await checkFfmpeg()).found, ext?)` from `lib/ytdlp.ts` and spread the result into the yt-dlp args. When ffmpeg is present it adds `--embed-metadata --embed-chapters` (text tags + chapters embed into any container, webm included) plus `--embed-thumbnail` **only for containers yt-dlp can embed cover art into** (`THUMBNAIL_EXTS`; webm is excluded, else yt-dlp errors in postprocessing). When ffmpeg is absent it returns `[]` so the download still succeeds untagged.
+
+- Single download passes the user-chosen `ext`, so a webm/opus pick gets tags + chapters but no cover art.
+- Playlist download omits `ext` and selects `bestaudio[ext=m4a]/bestaudio/best` -- preferring m4a (no re-encode) so cover art embeds reliably; bare `bestaudio` returns opus-in-webm which cannot hold a thumbnail.
+
+`checkFfmpeg()` is not cached -- it re-runs `ffmpeg -version` per call. The StatusBar `ffmpeg` row is a `warn` (not `error`) state when missing, since it does not block downloads.
 
 ### Playlist audio download
 

@@ -113,7 +113,7 @@ export default function StatusBar({ status, onRefresh }: StatusBarProps) {
   if (!status) {
     return (
       <div className="flex flex-col gap-2">
-        {(['Python', 'yt-dlp'] as const).map((name) => (
+        {(['Python', 'yt-dlp', 'ffmpeg'] as const).map((name) => (
           <div
             key={name}
             className="flex items-center gap-3 rounded-lg border px-4 py-3"
@@ -209,10 +209,39 @@ export default function StatusBar({ status, onRefresh }: StatusBarProps) {
     ytdlpMessage = `Version ${status.ytdlp.version}${suffix}`
   }
 
+  // ffmpeg row -- optional: downloads work without it, but metadata/thumbnails need it.
+  let ffmpegState: RowState
+  let ffmpegMessage: string
+  let ffmpegAction: ReactNode = null
+
+  if (status.ffmpeg.found) {
+    ffmpegState = 'ok'
+    ffmpegMessage = `Version ${status.ffmpeg.version} detected -- metadata & thumbnails embedded`
+  } else {
+    ffmpegState = 'warn'
+    ffmpegMessage = 'Not found -- install ffmpeg to embed metadata & cover art'
+    ffmpegAction = (
+      <a
+        href="https://ffmpeg.org/download.html"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="rounded px-3 py-1.5 text-xs font-semibold hover:opacity-80"
+        style={{
+          background: 'var(--bg-input)',
+          color: 'var(--text-secondary)',
+          border: '1px solid var(--border)',
+        }}
+      >
+        ffmpeg.org &rarr;
+      </a>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-2">
       <DepRow label="Python" state={pythonState} message={pythonMessage} action={pythonAction} />
       <DepRow label="yt-dlp" state={ytdlpState} message={ytdlpMessage} action={ytdlpAction} />
+      <DepRow label="ffmpeg" state={ffmpegState} message={ffmpegMessage} action={ffmpegAction} />
       <LogPanel lines={logLines} visible={showLog} />
     </div>
   )

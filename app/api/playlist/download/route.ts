@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import path from 'path'
-import { streamCommand, ensureOutputDir, reducePlaylistLine, finalizePlaylist, initialPlaylistState } from '@/lib/ytdlp'
+import { streamCommand, ensureOutputDir, reducePlaylistLine, finalizePlaylist, initialPlaylistState, checkFfmpeg, metadataArgs } from '@/lib/ytdlp'
 import { isYouTubeUrl } from '@/lib/validate'
 import type { PlaylistDownloadLine } from '@/types/media'
 
@@ -16,17 +16,21 @@ export async function POST(req: Request): Promise<Response> {
 
   const outputDir = ensureOutputDir()
   const outputTemplate = path.join(outputDir, '%(playlist_title)s', '%(playlist_index)02d - %(title)s.%(ext)s')
+  const meta = metadataArgs((await checkFfmpeg()).found)
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
     async start(controller) {
       const send = (msg: PlaylistDownloadLine) =>
         controller.enqueue(encoder.encode(JSON.stringify(msg) + '\n'))
-      // bestaudio/best = highest-quality existing audio stream, no re-encode (no ffmpeg).
+      // Prefer m4a audio (no re-encode) so cover art can embed -- yt-dlp cannot
+      // embed thumbnails into webm, which is what bare bestaudio (opus) returns.
+      // Falls back to bestaudio/best when no m4a stream exists.
+      // metadataArgs adds --embed-* only when ffmpeg is present.
       // --ignore-errors so one private/unavailable track does not abort the batch.
       const args = [
-        'yt-dlp', '-f', 'bestaudio/best', '--yes-playlist',
-        url, '-o', outputTemplate, '--newline', '--ignore-errors',
+        'yt-dlp', '-f', 'bestaudio[ext=m4a]/bestaudio/best', '--yes-playlist',
+        url, '-o', outputTemplate, '--newline', '--ignore-errors', ...meta,
       ]
       try {
         let state = initialPlaylistState

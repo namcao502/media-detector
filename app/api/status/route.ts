@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { execCommand } from '@/lib/ytdlp'
+import { execCommand, checkFfmpeg } from '@/lib/ytdlp'
 import type { StatusResult, UpdateStatus } from '@/types/media'
 
 let cachedStatus: StatusResult | null = null
@@ -53,7 +53,10 @@ export async function GET(req: Request): Promise<NextResponse> {
     }
   }
 
-  cachedStatus = { python, ytdlp }
+  // ffmpeg is independent of Python -- check it regardless.
+  const ffmpeg = await checkFfmpeg()
+
+  cachedStatus = { python, ytdlp, ffmpeg }
   return NextResponse.json(cachedStatus)
 }
 
