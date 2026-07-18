@@ -15,8 +15,9 @@ async function checkPython(): Promise<{ found: boolean; version: string | null; 
   return { found: false, version: null, cmd: 'python' }
 }
 
-async function checkYtdlp(): Promise<{ found: boolean; version: string | null }> {
-  const result = await execCommand('yt-dlp --version')
+async function checkYtdlp(pythonCmd: string): Promise<{ found: boolean; version: string | null }> {
+  // The `yt-dlp` shim lands in Python's Scripts dir (often off PATH); run the module.
+  const result = await execCommand(`${pythonCmd} -m yt_dlp --version`)
   if (result.code === 0) {
     return { found: true, version: result.stdout.trim() }
   }
@@ -45,7 +46,7 @@ export async function GET(req: Request): Promise<NextResponse> {
   let ytdlp: StatusResult['ytdlp'] = { found: false, version: null, updateStatus: 'skipped' }
 
   if (python.found) {
-    const ytdlpCheck = await checkYtdlp()
+    const ytdlpCheck = await checkYtdlp(python.cmd)
     if (ytdlpCheck.found) {
       const updateStatus = await updateYtdlp(python.cmd)
       ytdlp = { ...ytdlpCheck, updateStatus }

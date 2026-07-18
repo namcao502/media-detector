@@ -3,6 +3,7 @@ import { POST } from '../route'
 jest.mock('@/lib/ytdlp', () => ({
   execArgs: jest.fn(),
   parseMediaInfo: jest.requireActual('@/lib/ytdlp').parseMediaInfo,
+  ytdlpArgs: jest.fn((...args: string[]) => Promise.resolve(['python', '-m', 'yt_dlp', ...args])),
 }))
 
 import { execArgs } from '@/lib/ytdlp'

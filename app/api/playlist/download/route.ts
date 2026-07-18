@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import path from 'path'
-import { streamCommand, ensureOutputDir, reducePlaylistLine, finalizePlaylist, initialPlaylistState, checkFfmpeg, metadataArgs, ffmpegLocationArgs } from '@/lib/ytdlp'
+import { streamCommand, ensureOutputDir, reducePlaylistLine, finalizePlaylist, initialPlaylistState, checkFfmpeg, metadataArgs, ffmpegLocationArgs, ytdlpArgs } from '@/lib/ytdlp'
 import { isYouTubeUrl } from '@/lib/validate'
 import type { PlaylistDownloadLine } from '@/types/media'
 
@@ -28,10 +28,10 @@ export async function POST(req: Request): Promise<Response> {
       // Falls back to bestaudio/best when no m4a stream exists.
       // metadataArgs adds --embed-* only when ffmpeg is present.
       // --ignore-errors so one private/unavailable track does not abort the batch.
-      const args = [
-        'yt-dlp', '-f', 'bestaudio[ext=m4a]/bestaudio/best', '--yes-playlist',
+      const args = await ytdlpArgs(
+        '-f', 'bestaudio[ext=m4a]/bestaudio/best', '--yes-playlist',
         url, '-o', outputTemplate, '--newline', '--ignore-errors', ...meta,
-      ]
+      )
       try {
         let state = initialPlaylistState
         for await (const line of streamCommand(args)) {

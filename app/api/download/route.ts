@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import path from 'path'
-import { streamCommand, ensureOutputDir, parseProgress, parseDestination, checkFfmpeg, metadataArgs, ffmpegLocationArgs } from '@/lib/ytdlp'
+import { streamCommand, ensureOutputDir, parseProgress, parseDestination, checkFfmpeg, metadataArgs, ffmpegLocationArgs, ytdlpArgs } from '@/lib/ytdlp'
 import { isYouTubeUrl } from '@/lib/validate'
 import type { DownloadStreamLine } from '@/types/media'
 
@@ -28,7 +28,7 @@ export async function POST(req: Request): Promise<Response> {
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
     async start(controller) {
-      const args = ['yt-dlp', '-f', formatId, url, '-o', outputTemplate, '--no-playlist', '--newline', ...meta]
+      const args = await ytdlpArgs('-f', formatId, url, '-o', outputTemplate, '--no-playlist', '--newline', ...meta)
 
       try {
         // yt-dlp emits the final merged path last; we retain the last detected path.

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { execArgs, parseMediaInfo } from '@/lib/ytdlp'
+import { execArgs, parseMediaInfo, ytdlpArgs } from '@/lib/ytdlp'
 import { isYouTubeUrl } from '@/lib/validate'
 
 export async function POST(req: Request): Promise<NextResponse> {
@@ -16,7 +16,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   }
 
   // Use execArgs (spawn, no shell) to prevent command injection from URL values.
-  const result = await execArgs(['yt-dlp', '--dump-json', url, '--no-playlist'])
+  const result = await execArgs(await ytdlpArgs('--dump-json', url, '--no-playlist'))
 
   if (result.code !== 0 || !result.stdout) {
     const message = result.stderr

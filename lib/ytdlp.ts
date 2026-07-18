@@ -60,6 +60,13 @@ export async function pipArgs(...args: string[]): Promise<string[]> {
   return [await resolvePython(), '-m', 'pip', ...args]
 }
 
+// yt-dlp installs a `yt-dlp` shim into Python's Scripts dir, which a fresh
+// python.org install does not add to PATH. Run it as a module so it works
+// wherever `python` does.
+export async function ytdlpArgs(...args: string[]): Promise<string[]> {
+  return [await resolvePython(), '-m', 'yt_dlp', ...args]
+}
+
 // Merges stdout and stderr into a single stream to avoid pipe buffer deadlocks.
 // Sequential for-await on stdout then stderr can deadlock if stderr fills its
 // ~64KB buffer while we are still blocked reading stdout.

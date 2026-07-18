@@ -3,6 +3,7 @@ import { POST } from '../route'
 jest.mock('@/lib/ytdlp', () => ({
   execArgs: jest.fn(),
   parsePlaylistInfo: jest.requireActual('@/lib/ytdlp').parsePlaylistInfo,
+  ytdlpArgs: jest.fn((...args: string[]) => Promise.resolve(['python', '-m', 'yt_dlp', ...args])),
 }))
 jest.mock('@/lib/validate', () => ({ isYouTubeUrl: jest.fn().mockReturnValue(true) }))
 

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { execArgs, parsePlaylistInfo } from '@/lib/ytdlp'
+import { execArgs, parsePlaylistInfo, ytdlpArgs } from '@/lib/ytdlp'
 import { isYouTubeUrl } from '@/lib/validate'
 
 export async function POST(req: Request): Promise<NextResponse> {
@@ -16,7 +16,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   }
 
   // --flat-playlist avoids probing every video's formats (fast); user-controlled URL -> execArgs (spawn, no shell).
-  const result = await execArgs(['yt-dlp', '--flat-playlist', '--dump-single-json', '--yes-playlist', url])
+  const result = await execArgs(await ytdlpArgs('--flat-playlist', '--dump-single-json', '--yes-playlist', url))
 
   if (result.code !== 0 || !result.stdout) {
     const message = result.stderr ? result.stderr.replace(/^ERROR:\s*/i, '') : 'Failed to fetch playlist'
