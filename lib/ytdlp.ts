@@ -45,6 +45,21 @@ export async function execArgs(args: string[]): Promise<ExecResult> {
   })
 }
 
+// A fresh python.org install has `python` on PATH but often no bare `pip` (its
+// Scripts dir is not added), so always invoke pip as `<python> -m pip`.
+let cachedPython: string | null = null
+export async function resolvePython(): Promise<string> {
+  if (cachedPython) return cachedPython
+  for (const cmd of ['python', 'python3']) {
+    if ((await execCommand(`${cmd} --version`)).code === 0) return (cachedPython = cmd)
+  }
+  return 'python' // ponytail: default; the pip command then surfaces the real error
+}
+
+export async function pipArgs(...args: string[]): Promise<string[]> {
+  return [await resolvePython(), '-m', 'pip', ...args]
+}
+
 // Merges stdout and stderr into a single stream to avoid pipe buffer deadlocks.
 // Sequential for-await on stdout then stderr can deadlock if stderr fills its
 // ~64KB buffer while we are still blocked reading stdout.

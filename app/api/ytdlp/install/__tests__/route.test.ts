@@ -2,6 +2,7 @@ import { POST } from '../route'
 
 jest.mock('@/lib/ytdlp', () => ({
   streamCommand: jest.fn(),
+  pipArgs: jest.fn().mockResolvedValue(['python', '-m', 'pip', 'install', 'yt-dlp']),
 }))
 
 import { streamCommand } from '@/lib/ytdlp'

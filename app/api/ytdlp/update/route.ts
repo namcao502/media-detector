@@ -1,4 +1,4 @@
-import { streamCommand } from '@/lib/ytdlp'
+import { streamCommand, pipArgs } from '@/lib/ytdlp'
 
 export async function POST(): Promise<Response> {
   const encoder = new TextEncoder()
@@ -6,7 +6,7 @@ export async function POST(): Promise<Response> {
     async start(controller) {
       try {
         // yt-dlp -U self-update refuses for pip/PyPI installs; update the way it was installed.
-        for await (const line of streamCommand(['pip', 'install', '--upgrade', 'yt-dlp'])) {
+        for await (const line of streamCommand(await pipArgs('install', '--upgrade', 'yt-dlp'))) {
           controller.enqueue(encoder.encode(line + '\n'))
         }
       } finally {

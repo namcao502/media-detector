@@ -4,15 +4,15 @@ import type { StatusResult, UpdateStatus } from '@/types/media'
 
 let cachedStatus: StatusResult | null = null
 
-async function checkPython(): Promise<{ found: boolean; version: string | null }> {
-  for (const cmd of ['python --version', 'python3 --version']) {
-    const result = await execCommand(cmd)
+async function checkPython(): Promise<{ found: boolean; version: string | null; cmd: string }> {
+  for (const cmd of ['python', 'python3']) {
+    const result = await execCommand(`${cmd} --version`)
     if (result.code === 0) {
       const match = result.stdout.match(/Python ([\d.]+)/)
-      return { found: true, version: match ? match[1] : result.stdout }
+      return { found: true, version: match ? match[1] : result.stdout, cmd }
     }
   }
-  return { found: false, version: null }
+  return { found: false, version: null, cmd: 'python' }
 }
 
 async function checkYtdlp(): Promise<{ found: boolean; version: string | null }> {
@@ -23,9 +23,10 @@ async function checkYtdlp(): Promise<{ found: boolean; version: string | null }>
   return { found: false, version: null }
 }
 
-async function updateYtdlp(): Promise<UpdateStatus> {
+async function updateYtdlp(pythonCmd: string): Promise<UpdateStatus> {
   // yt-dlp -U self-update refuses for pip/PyPI installs; update the way it was installed.
-  const result = await execCommand('pip install --upgrade yt-dlp')
+  // Bare `pip` is often not on PATH; go through the resolved interpreter.
+  const result = await execCommand(`${pythonCmd} -m pip install --upgrade yt-dlp`)
   if (result.code !== 0) return 'failed'
   const out = result.stdout.toLowerCase()
   if (out.includes('successfully installed')) return 'updated'
@@ -46,7 +47,7 @@ export async function GET(req: Request): Promise<NextResponse> {
   if (python.found) {
     const ytdlpCheck = await checkYtdlp()
     if (ytdlpCheck.found) {
-      const updateStatus = await updateYtdlp()
+      const updateStatus = await updateYtdlp(python.cmd)
       ytdlp = { ...ytdlpCheck, updateStatus }
     } else {
       ytdlp = { found: false, version: null, updateStatus: 'skipped' }
@@ -56,7 +57,7 @@ export async function GET(req: Request): Promise<NextResponse> {
   // ffmpeg is independent of Python -- check it regardless.
   const ffmpeg = await checkFfmpeg()
 
-  cachedStatus = { python, ytdlp, ffmpeg }
+  cachedStatus = { python: { found: python.found, version: python.version }, ytdlp, ffmpeg }
   return NextResponse.json(cachedStatus)
 }
 
