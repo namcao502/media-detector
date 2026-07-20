@@ -102,6 +102,30 @@ export async function* streamCommand(args: string[]): AsyncGenerator<string> {
   }
 }
 
+// Debian/Ubuntu mark the system Python as externally managed (PEP 668), so a
+// plain `pip install` refuses and hints at --break-system-packages.
+export function isExternallyManaged(output: string): boolean {
+  return /externally[- ]managed|break-system-packages/i.test(output)
+}
+
+// Stream a `python -m pip` command. If PEP 668 blocks it (system Python on
+// Ubuntu/Debian), retry once with --user --break-system-packages, which
+// installs into ~/.local so `python -m yt_dlp` still finds it without root.
+export async function* pipStream(...pipSubArgs: string[]): AsyncGenerator<string> {
+  const base = await pipArgs(...pipSubArgs)
+  let managed = false
+  for await (const line of streamCommand(base)) {
+    if (isExternallyManaged(line)) managed = true
+    yield line
+  }
+  if (managed) {
+    yield '[media-detector] System Python is externally managed (PEP 668); retrying with --user --break-system-packages...'
+    for await (const line of streamCommand([...base, '--user', '--break-system-packages'])) {
+      yield line
+    }
+  }
+}
+
 export function parseProgress(line: string): number | null {
   const match = line.match(/\[download\]\s+([\d.]+)%/)
   if (!match) return null

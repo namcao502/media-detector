@@ -29,9 +29,16 @@ The app requires two external tools at runtime:
 |------|-------|---------|-----------|
 | Python 3.8+ | `python --version` or `python3 --version` | Manual -- user installs from python.org | Yes |
 | yt-dlp | `python -m yt_dlp --version` | Automatic -- app installs via `python -m pip install yt-dlp` (and updates the same way) | Yes |
-| ffmpeg (+ ffprobe) | `ffmpeg -version` (also probes `bin/`, winget/choco shim dirs) | In-app button (`winget`/`choco`), system PATH, or vendor `ffmpeg`+`ffprobe` into `bin/` (see `bin/README.md`) | Optional |
+| ffmpeg (+ ffprobe) | `ffmpeg -version` (also probes `bin/`, winget/choco shim dirs) | In-app button (Windows: `winget`/`choco`; Linux: `apt-get` when root, else prints `sudo apt install ffmpeg`), system PATH, or vendor `ffmpeg`+`ffprobe` into `bin/` (see `bin/README.md`) | Optional |
 
 The `/api/status` route checks all three on startup, auto-updates yt-dlp, and caches the result. The UI is disabled until Python + yt-dlp are present. **ffmpeg is optional**: downloads work without it, but embedding metadata + cover art needs it (see Metadata embedding). yt-dlp is a pip/PyPI install, so it is updated with `python -m pip install --upgrade yt-dlp`, not the `yt-dlp -U` self-updater (which refuses for pip installs). Both pip and yt-dlp are invoked as `python -m ...` (via `pipArgs`/`ytdlpArgs` in `lib/ytdlp.ts`) because a fresh python.org install does not add Python's `Scripts` dir -- where the bare `pip`/`yt-dlp` shims live -- to PATH.
+
+### Cross-platform (Windows + Ubuntu/Linux)
+
+`checkPython` tries `python` then `python3`, so Ubuntu (which ships only `python3`) is detected. Where the OS matters, the code branches on `process.platform`:
+- **yt-dlp install/update** -- On Ubuntu/Debian the system Python is externally managed (PEP 668), so a plain `pip install` refuses. `pipStream` (and the status auto-update) detect this via `isExternallyManaged()` and retry once with `--user --break-system-packages`, installing into `~/.local` so `python -m yt_dlp` finds it without root.
+- **ffmpeg install** (`/api/ffmpeg/install`) -- `win32`: winget then choco. `linux`: `apt-get install -y ffmpeg` when running as root, otherwise it prints the `sudo apt install ffmpeg` command. Other: suggests `brew`. The `bin/` vendoring fallback works on every platform (`FFMPEG_EXE` drops the `.exe` off-Windows).
+- **open-folder** (`/api/open-folder`) -- `explorer.exe` (Windows), `open` (macOS), `xdg-open` (Linux).
 
 ---
 

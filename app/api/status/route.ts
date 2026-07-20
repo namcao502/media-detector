@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { execCommand, checkFfmpeg } from '@/lib/ytdlp'
+import { execCommand, checkFfmpeg, isExternallyManaged } from '@/lib/ytdlp'
 import type { StatusResult, UpdateStatus } from '@/types/media'
 
 let cachedStatus: StatusResult | null = null
@@ -27,7 +27,12 @@ async function checkYtdlp(pythonCmd: string): Promise<{ found: boolean; version:
 async function updateYtdlp(pythonCmd: string): Promise<UpdateStatus> {
   // yt-dlp -U self-update refuses for pip/PyPI installs; update the way it was installed.
   // Bare `pip` is often not on PATH; go through the resolved interpreter.
-  const result = await execCommand(`${pythonCmd} -m pip install --upgrade yt-dlp`)
+  const base = `${pythonCmd} -m pip install --upgrade yt-dlp`
+  let result = await execCommand(base)
+  // Ubuntu/Debian system Python is externally managed (PEP 668); retry into ~/.local.
+  if (result.code !== 0 && isExternallyManaged(`${result.stdout}\n${result.stderr}`)) {
+    result = await execCommand(`${base} --user --break-system-packages`)
+  }
   if (result.code !== 0) return 'failed'
   const out = result.stdout.toLowerCase()
   if (out.includes('successfully installed')) return 'updated'

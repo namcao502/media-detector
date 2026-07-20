@@ -3,6 +3,7 @@ import { GET, resetStatusCache } from '../route'
 jest.mock('@/lib/ytdlp', () => ({
   execCommand: jest.fn(),
   checkFfmpeg: jest.fn().mockResolvedValue({ found: true, version: '7.1' }),
+  isExternallyManaged: jest.requireActual('@/lib/ytdlp').isExternallyManaged,
 }))
 
 import { execCommand, checkFfmpeg } from '@/lib/ytdlp'

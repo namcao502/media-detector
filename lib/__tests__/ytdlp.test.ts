@@ -2,7 +2,7 @@ import {
   parseProgress, parseMediaInfo, resolveOutputDir, parseDestination,
   parsePlaylistItem, parsePlaylistInfo,
   reducePlaylistLine, finalizePlaylist, initialPlaylistState,
-  metadataArgs, firstDirWithFfmpeg,
+  metadataArgs, firstDirWithFfmpeg, isExternallyManaged,
 } from '../ytdlp'
 import type { PlaylistDownloadLine, PlaylistBatchDoneLine } from '@/types/media'
 import path from 'path'
@@ -197,5 +197,20 @@ describe('reducePlaylistLine + finalizePlaylist', () => {
     expect(done.downloaded).toBe(1)
     expect(done.total).toBe(2)
     expect(done.failed).toBe(1)
+  })
+})
+
+describe('isExternallyManaged', () => {
+  it('detects a PEP 668 pip error', () => {
+    const err = 'error: externally-managed-environment\n× This environment is externally managed'
+    expect(isExternallyManaged(err)).toBe(true)
+  })
+
+  it('detects the --break-system-packages hint', () => {
+    expect(isExternallyManaged('hint: run pip install --break-system-packages')).toBe(true)
+  })
+
+  it('is false for a normal pip success', () => {
+    expect(isExternallyManaged('Successfully installed yt-dlp-2025.04.15')).toBe(false)
   })
 })

@@ -1,11 +1,11 @@
-import { streamCommand, pipArgs } from '@/lib/ytdlp'
+import { pipStream } from '@/lib/ytdlp'
 
 export async function POST(): Promise<Response> {
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        for await (const line of streamCommand(await pipArgs('install', 'yt-dlp'))) {
+        for await (const line of pipStream('install', 'yt-dlp')) {
           controller.enqueue(encoder.encode(line + '\n'))
         }
       } finally {

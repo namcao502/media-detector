@@ -1,12 +1,11 @@
 import { POST } from '../route'
 
 jest.mock('@/lib/ytdlp', () => ({
-  streamCommand: jest.fn(),
-  pipArgs: jest.fn().mockResolvedValue(['python', '-m', 'pip', 'install', 'yt-dlp']),
+  pipStream: jest.fn(),
 }))
 
-import { streamCommand } from '@/lib/ytdlp'
-const mockStream = streamCommand as jest.MockedFunction<typeof streamCommand>
+import { pipStream } from '@/lib/ytdlp'
+const mockStream = pipStream as jest.MockedFunction<typeof pipStream>
 
 async function* fakeStream(lines: string[]): AsyncGenerator<string> {
   for (const line of lines) yield line
