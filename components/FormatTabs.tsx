@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import type { MediaInfo } from '@/types/media'
+import { sortAudioForApple } from '@/lib/audioCompat'
 import FormatRow from './FormatRow'
 
 interface FormatTabsProps {
@@ -16,23 +17,24 @@ export default function FormatTabs({ info, url, onDownloadStart }: FormatTabsPro
   return (
     <div>
       <div
-        className="mb-4 flex border-b"
-        style={{ borderColor: 'var(--border)' }}
+        className="mb-4 flex gap-1 rounded-xl p-1"
+        style={{ background: 'var(--bg-fill)' }}
       >
         {(['video', 'audio'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className="px-5 py-2 text-xs font-bold uppercase tracking-wide transition-colors"
+            className="flex-1 rounded-lg py-1.5 text-sm font-semibold capitalize transition-colors"
             style={
               activeTab === tab
                 ? {
                     color: 'var(--text-primary)',
-                    borderBottom: '2px solid var(--accent)',
-                    marginBottom: '-1px',
+                    background: 'var(--bg-elevated)',
+                    boxShadow: 'var(--shadow-pill)',
                   }
                 : {
-                    color: 'var(--text-muted)',
+                    color: 'var(--text-secondary)',
+                    background: 'transparent',
                   }
             }
           >
@@ -54,7 +56,7 @@ export default function FormatTabs({ info, url, onDownloadStart }: FormatTabsPro
             />
           ))}
         {activeTab === 'audio' &&
-          info.audioFormats.map((f) => (
+          sortAudioForApple(info.audioFormats).map((f) => (
             <FormatRow
               key={f.formatId}
               type="audio"

@@ -21,14 +21,14 @@ interface MediaInfoProps {
 export default function MediaInfo({ info }: MediaInfoProps) {
   return (
     <div
-      className="flex gap-4 rounded-lg border p-4"
+      className="flex gap-4 rounded-2xl border p-4"
       style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
     >
       {info.thumbnail && (
         <img
           src={info.thumbnail}
           alt={info.title}
-          className="h-20 w-36 flex-shrink-0 rounded object-cover"
+          className="h-20 w-36 flex-shrink-0 rounded-xl object-cover"
         />
       )}
       <div className="flex flex-col justify-center">

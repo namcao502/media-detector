@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import type { VideoFormat, AudioFormat, DownloadStreamLine } from '@/types/media'
+import { isApplePlayable } from '@/lib/audioCompat'
 import DownloadProgress from './DownloadProgress'
 
 type FormatRowProps =
@@ -69,7 +70,7 @@ export default function FormatRow({ type, format, url, title, onDownloadStart }:
 
   return (
     <div
-      className="rounded-lg border px-4 py-3"
+      className="rounded-xl border px-4 py-3"
       style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
     >
       <div className="flex items-center justify-between">
@@ -87,6 +88,26 @@ export default function FormatRow({ type, format, url, title, onDownloadStart }:
             <span className="ml-2 text-xs" style={{ color: 'var(--text-muted)' }}>
               {codec}
             </span>
+            {type === 'audio' &&
+              (isApplePlayable(format.ext) ? (
+                <span
+                  className="ml-2 rounded px-1.5 py-0.5 text-xs font-semibold"
+                  style={{ border: '1px solid var(--status-ok)', color: 'var(--status-ok)' }}
+                >
+                  iPhone
+                </span>
+              ) : (
+                <span
+                  className="ml-2 rounded px-1.5 py-0.5 text-xs font-semibold"
+                  style={{
+                    background: 'var(--bg-status-warn)',
+                    border: '1px solid var(--border-status-warn)',
+                    color: 'var(--text-status-warn)',
+                  }}
+                >
+                  Not on iPhone
+                </span>
+              ))}
             {type === 'video' && (format as VideoFormat).fps && (
               <span className="ml-2 text-xs" style={{ color: 'var(--text-muted)' }}>
                 {(format as VideoFormat).fps}fps
@@ -101,7 +122,7 @@ export default function FormatRow({ type, format, url, title, onDownloadStart }:
           {!downloading && !savedPath && (
             <button
               onClick={handleDownload}
-              className="rounded px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+              className="rounded-full px-4 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 active:opacity-70"
               style={{ background: 'var(--accent)' }}
             >
               Download

@@ -38,9 +38,9 @@ export default function DownloadProgress({ percent, savedPath }: DownloadProgres
             <span style={{ color: 'var(--status-ok)' }}>Saved to Documents\MediaDetector</span>
             <button
               onClick={handleOpenFolder}
-              className="rounded px-2 py-0.5 text-xs hover:opacity-80"
+              className="rounded-full px-3 py-0.5 text-xs transition-opacity hover:opacity-80 active:opacity-60"
               style={{
-                background: 'var(--bg-input)',
+                background: 'var(--bg-fill)',
                 color: 'var(--text-secondary)',
                 border: '1px solid var(--border)',
               }}

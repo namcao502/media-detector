@@ -93,21 +93,16 @@ export default function Home() {
     <main className="mx-auto max-w-2xl space-y-5 px-4 py-10">
       <div style={{ position: 'relative', textAlign: 'center' }}>
         <div style={{ position: 'absolute', right: 0, top: 0 }}>
-          <ThemeButton
-            accentHex={theme.accentHex}
-            isRainbow={theme.isRainbow}
-            setPreset={theme.setPreset}
-            toggleRainbow={theme.toggleRainbow}
-          />
+          <ThemeButton mode={theme.mode} toggle={theme.toggle} />
         </div>
         <h1
-          className="text-2xl font-bold uppercase tracking-widest"
+          className="text-3xl font-bold tracking-tight"
           style={{ color: 'var(--text-primary)' }}
         >
           Media Detector
         </h1>
-        <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-          YouTube & YouTube Music
+        <p className="mt-1 text-sm" style={{ color: 'var(--text-secondary)' }}>
+          YouTube &amp; YouTube Music
         </p>
       </div>
 
@@ -121,7 +116,7 @@ export default function Home() {
 
       {error && (
         <div
-          className="rounded-lg border px-4 py-3 text-sm"
+          className="rounded-2xl border px-4 py-3 text-sm"
           style={{
             background: 'var(--bg-status-error)',
             borderColor: 'var(--border-status-error)',

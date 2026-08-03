@@ -24,7 +24,7 @@ export default function UrlInput({ onDetect, disabled, loading }: UrlInputProps)
         onChange={(e) => setValue(e.target.value)}
         placeholder="Paste a YouTube or YouTube Music URL..."
         disabled={disabled || loading}
-        className="flex-1 rounded-lg px-4 py-3 text-sm outline-none disabled:opacity-50"
+        className="flex-1 rounded-xl px-4 py-3 text-sm outline-none disabled:opacity-50"
         style={{
           background: 'var(--bg-input)',
           color: 'var(--text-primary)',
@@ -34,7 +34,7 @@ export default function UrlInput({ onDetect, disabled, loading }: UrlInputProps)
       <button
         type="submit"
         disabled={disabled || loading || !value.trim()}
-        className="rounded-lg px-6 py-3 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
+        className="rounded-full px-6 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90 active:opacity-70 disabled:opacity-50"
         style={{ background: 'var(--accent)' }}
       >
         {loading ? 'Detecting...' : 'Detect'}

@@ -74,7 +74,7 @@ export default function PlaylistPanel({ info, url }: PlaylistPanelProps) {
   const overallPercent = total > 0 ? Math.round((done.size / total) * 100) : 0
 
   return (
-    <div className="rounded-lg border px-4 py-3" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
+    <div className="rounded-2xl border px-4 py-3" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
       <div className="flex items-center justify-between">
         <div>
           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{info.title}</div>
@@ -83,7 +83,7 @@ export default function PlaylistPanel({ info, url }: PlaylistPanelProps) {
         {!downloading && !summary && (
           <button
             onClick={handleDownloadAll}
-            className="rounded px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+            className="rounded-full px-4 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 active:opacity-70"
             style={{ background: 'var(--accent)' }}
           >
             Download all audio
@@ -127,8 +127,8 @@ export default function PlaylistPanel({ info, url }: PlaylistPanelProps) {
           {summary.folder && (
             <button
               onClick={handleOpenFolder}
-              className="rounded px-2 py-0.5 text-xs hover:opacity-80"
-              style={{ background: 'var(--bg-input)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
+              className="rounded-full px-3 py-0.5 text-xs transition-opacity hover:opacity-80 active:opacity-60"
+              style={{ background: 'var(--bg-fill)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
             >
               Open Folder
             </button>

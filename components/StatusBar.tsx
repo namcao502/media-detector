@@ -69,7 +69,7 @@ function DepRow({
 
   return (
     <div
-      className="flex items-center gap-3 rounded-lg border px-4 py-3"
+      className="flex items-center gap-3 rounded-xl border px-4 py-3"
       style={rowStyle}
     >
       <span
@@ -116,7 +116,7 @@ export default function StatusBar({ status, onRefresh }: StatusBarProps) {
         {(['Python', 'yt-dlp', 'ffmpeg'] as const).map((name) => (
           <div
             key={name}
-            className="flex items-center gap-3 rounded-lg border px-4 py-3"
+            className="flex items-center gap-3 rounded-xl border px-4 py-3"
             style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
           >
             <span
@@ -153,9 +153,9 @@ export default function StatusBar({ status, onRefresh }: StatusBarProps) {
         href="https://python.org/downloads"
         target="_blank"
         rel="noopener noreferrer"
-        className="rounded px-3 py-1.5 text-xs font-semibold hover:opacity-80"
+        className="rounded-full px-4 py-1.5 text-xs font-semibold transition-opacity hover:opacity-80 active:opacity-60"
         style={{
-          background: 'var(--bg-input)',
+          background: 'var(--bg-fill)',
           color: 'var(--text-secondary)',
           border: '1px solid var(--border)',
         }}
@@ -181,7 +181,7 @@ export default function StatusBar({ status, onRefresh }: StatusBarProps) {
         <button
           onClick={() => handleInstall('/api/ytdlp/install')}
           disabled={loading}
-          className="rounded px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+          className="rounded-full px-4 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 active:opacity-70 disabled:opacity-50"
           style={{ background: 'var(--accent)' }}
         >
           {loading ? 'Installing...' : 'Install'}
@@ -195,7 +195,7 @@ export default function StatusBar({ status, onRefresh }: StatusBarProps) {
       <button
         onClick={() => handleInstall('/api/ytdlp/update')}
         disabled={loading}
-        className="rounded px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+        className="rounded-full px-4 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 active:opacity-70 disabled:opacity-50"
         style={{ background: 'var(--accent)' }}
       >
         {loading ? 'Retrying...' : 'Retry'}
@@ -225,7 +225,7 @@ export default function StatusBar({ status, onRefresh }: StatusBarProps) {
         <button
           onClick={() => handleInstall('/api/ffmpeg/install')}
           disabled={loading}
-          className="rounded px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+          className="rounded-full px-4 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 active:opacity-70 disabled:opacity-50"
           style={{ background: 'var(--accent)' }}
         >
           {loading ? 'Installing...' : 'Install'}
@@ -234,9 +234,9 @@ export default function StatusBar({ status, onRefresh }: StatusBarProps) {
           href="https://www.gyan.dev/ffmpeg/builds/"
           target="_blank"
           rel="noopener noreferrer"
-          className="rounded px-3 py-1.5 text-xs font-semibold hover:opacity-80"
+          className="rounded-full px-4 py-1.5 text-xs font-semibold transition-opacity hover:opacity-80 active:opacity-60"
           style={{
-            background: 'var(--bg-input)',
+            background: 'var(--bg-fill)',
             color: 'var(--text-secondary)',
             border: '1px solid var(--border)',
           }}

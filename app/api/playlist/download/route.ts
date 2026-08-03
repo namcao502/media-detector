@@ -15,7 +15,7 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const outputDir = ensureOutputDir()
-  const outputTemplate = path.join(outputDir, '%(playlist_title)s', '%(playlist_index)02d - %(title)s.%(ext)s')
+  const outputTemplate = path.join(outputDir, '%(playlist_title)s', '%(title)s.%(ext)s')
   const meta = [...ffmpegLocationArgs(), ...metadataArgs((await checkFfmpeg()).found)]
 
   const encoder = new TextEncoder()
