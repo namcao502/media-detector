@@ -1,26 +1,34 @@
 import { POST } from '../route'
+import type { PlaylistDownloadLine } from '@/types/media'
 
 jest.mock('@/lib/ytdlp', () => ({
-  streamCommand: jest.fn(),
-  ensureOutputDir: jest.fn().mockReturnValue('C:\\Users\\test\\Documents\\MediaDetector'),
-  reducePlaylistLine: jest.requireActual('@/lib/ytdlp').reducePlaylistLine,
-  finalizePlaylist: jest.requireActual('@/lib/ytdlp').finalizePlaylist,
-  initialPlaylistState: jest.requireActual('@/lib/ytdlp').initialPlaylistState,
+  execArgs: jest.fn(),
+  ensureOutputDir: jest.fn().mockReturnValue('C:\\out'),
   checkFfmpeg: jest.fn().mockResolvedValue({ found: false, version: null }),
-  metadataArgs: jest.requireActual('@/lib/ytdlp').metadataArgs,
-  ffmpegLocationArgs: jest.requireActual('@/lib/ytdlp').ffmpegLocationArgs,
+  metadataArgs: jest.fn().mockReturnValue([]),
+  ffmpegLocationArgs: jest.fn().mockReturnValue([]),
   ytdlpArgs: jest.fn((...args: string[]) => Promise.resolve(['python', '-m', 'yt_dlp', ...args])),
+  playlistFormatArgs: jest.fn().mockReturnValue({ formatArgs: ['-x', '--audio-format', 'm4a'], expectedExt: 'm4a' }),
+  parsePlaylistEntries: jest.fn().mockReturnValue({ title: 'Mix', entries: [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }] }),
+  sanitizeFolderName: jest.fn((s: string) => s),
+  runTrack: jest.fn(),
+  parseProgress: jest.fn(),
+  parseDestination: jest.fn(),
+  orchestratePlaylist: jest.fn(),
 }))
 jest.mock('@/lib/validate', () => ({ isYouTubeUrl: jest.fn().mockReturnValue(true) }))
 
-import { streamCommand, checkFfmpeg } from '@/lib/ytdlp'
+import { execArgs, ensureOutputDir, playlistFormatArgs, parsePlaylistEntries, orchestratePlaylist } from '@/lib/ytdlp'
 import { isYouTubeUrl } from '@/lib/validate'
 
-const mockStream = streamCommand as jest.MockedFunction<typeof streamCommand>
+const mockExecArgs = execArgs as jest.MockedFunction<typeof execArgs>
+const mockEnsureDir = ensureOutputDir as jest.MockedFunction<typeof ensureOutputDir>
+const mockFormatArgs = playlistFormatArgs as jest.MockedFunction<typeof playlistFormatArgs>
+const mockParseEntries = parsePlaylistEntries as jest.MockedFunction<typeof parsePlaylistEntries>
+const mockOrchestrate = orchestratePlaylist as jest.MockedFunction<typeof orchestratePlaylist>
 const mockIsYouTubeUrl = isYouTubeUrl as jest.MockedFunction<typeof isYouTubeUrl>
-const mockFfmpeg = checkFfmpeg as jest.MockedFunction<typeof checkFfmpeg>
 
-async function* fakeStream(lines: string[]): AsyncGenerator<string> {
+async function* fakeLines(lines: PlaylistDownloadLine[]): AsyncGenerator<PlaylistDownloadLine> {
   for (const line of lines) yield line
 }
 function req(body: unknown) {
@@ -28,48 +36,75 @@ function req(body: unknown) {
     method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' },
   })
 }
+async function readLines(res: Response) {
+  return (await res.text()).trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
+}
+
+const okDump = { stdout: '{"title":"Mix"}', stderr: '', code: 0 }
 
 describe('POST /api/playlist/download', () => {
-  beforeEach(() => jest.clearAllMocks())
-
-  it('emits item, track-done, and done summary', async () => {
-    mockStream.mockReturnValue(fakeStream([
-      '[download] Downloading item 1 of 2',
-      '[download] Destination: C:\\Users\\test\\Documents\\MediaDetector\\Mix\\01 - A.m4a',
-      '[download] 100% of 3.00MiB',
-      '[download] Downloading item 2 of 2',
-      '[download] Destination: C:\\Users\\test\\Documents\\MediaDetector\\Mix\\02 - B.m4a',
-      '[download] 100% of 3.00MiB',
-    ]))
-    const res = await POST(req({ url: 'https://youtube.com/playlist?list=PL1' }))
-    expect(res.status).toBe(200)
-    const lines = (await res.text()).trim().split('\n').map((l) => JSON.parse(l))
-    expect(lines.find((l) => l.type === 'item' && l.index === 1 && l.total === 2)).toBeDefined()
-    expect(lines.filter((l) => l.type === 'track-done')).toHaveLength(2)
-    const done = lines.find((l) => l.type === 'done')
-    expect(done.downloaded).toBe(2)
-    expect(done.total).toBe(2)
-    expect(done.folder).toContain('Mix')
+  beforeEach(() => {
+    jest.clearAllMocks()
+    mockEnsureDir.mockReturnValue('C:\\out')
+    mockFormatArgs.mockReturnValue({ formatArgs: ['-x', '--audio-format', 'm4a'], expectedExt: 'm4a' })
+    mockParseEntries.mockReturnValue({ title: 'Mix', entries: [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }] })
   })
 
-  it('adds metadata embed flags when ffmpeg is present', async () => {
-    mockFfmpeg.mockResolvedValueOnce({ found: true, version: '7.1' })
-    mockStream.mockReturnValue(fakeStream(['[download] Downloading item 1 of 1']))
-    await POST(req({ url: 'https://youtube.com/playlist?list=PL1' }))
-    const args = mockStream.mock.calls[0][0]
-    expect(args).toContain('--embed-metadata')
-    expect(args).toContain('--embed-thumbnail')
+  it('flat-dumps the playlist and streams orchestrator lines', async () => {
+    mockExecArgs.mockResolvedValue(okDump)
+    mockOrchestrate.mockReturnValue(fakeLines([
+      { type: 'item', index: 1, total: 2 },
+      { type: 'track-done', index: 1, savedPath: 'C:\\out\\Mix\\A.m4a' },
+      { type: 'track-error', index: 2, title: 'B' },
+      { type: 'done', folder: 'C:\\out\\Mix', downloaded: 1, total: 2, failed: 1 },
+    ]))
+
+    const res = await POST(req({ url: 'https://youtube.com/playlist?list=PL1' }))
+    expect(res.status).toBe(200)
+    // the flat-playlist dump ran
+    expect(mockExecArgs.mock.calls[0][0]).toEqual(expect.arrayContaining(['--flat-playlist', '--dump-single-json']))
+    const lines = await readLines(res)
+    expect(lines.find((l) => l.type === 'track-done' && l.index === 1)).toBeDefined()
+    expect(lines.find((l) => l.type === 'track-error' && l.index === 2)).toBeDefined()
+    expect(lines.find((l) => l.type === 'done' && l.failed === 1)).toBeDefined()
+  })
+
+  it('passes a body-supplied outputDir to ensureOutputDir', async () => {
+    mockExecArgs.mockResolvedValue(okDump)
+    mockOrchestrate.mockReturnValue(fakeLines([]))
+    await POST(req({ url: 'https://youtube.com/playlist?list=PL1', outputDir: 'D:\\Music' }))
+    expect(mockEnsureDir).toHaveBeenCalledWith('D:\\Music')
+  })
+
+  it('parses the format selection and forwards it to playlistFormatArgs', async () => {
+    mockExecArgs.mockResolvedValue(okDump)
+    mockOrchestrate.mockReturnValue(fakeLines([]))
+    await POST(req({ url: 'https://youtube.com/playlist?list=PL1', mode: 'video', videoQuality: '720' }))
+    expect(mockFormatArgs).toHaveBeenCalledWith(
+      { mode: 'video', audioFormat: 'm4a', videoQuality: '720' },
+      false,
+    )
+  })
+
+  it('emits an error line when the flat-playlist dump fails', async () => {
+    mockExecArgs.mockResolvedValue({ stdout: '', stderr: 'ERROR: playlist gone', code: 1 })
+    const res = await POST(req({ url: 'https://youtube.com/playlist?list=PL1' }))
+    const lines = await readLines(res)
+    expect(lines.find((l) => l.type === 'error').message).toContain('playlist gone')
+    expect(mockOrchestrate).not.toHaveBeenCalled()
+  })
+
+  it('emits an error line when the playlist has no tracks', async () => {
+    mockExecArgs.mockResolvedValue(okDump)
+    mockParseEntries.mockReturnValue({ title: 'Mix', entries: [] })
+    const res = await POST(req({ url: 'https://youtube.com/playlist?list=PL1' }))
+    const lines = await readLines(res)
+    expect(lines.find((l) => l.type === 'error')).toBeDefined()
+    expect(mockOrchestrate).not.toHaveBeenCalled()
   })
 
   it('returns 400 for invalid URL', async () => {
     mockIsYouTubeUrl.mockReturnValueOnce(false)
     expect((await POST(req({ url: 'https://vimeo.com/x' }))).status).toBe(400)
-  })
-
-  it('emits error line when streamCommand throws', async () => {
-    mockStream.mockReturnValue((async function* () { throw new Error('yt-dlp crashed') })())
-    const res = await POST(req({ url: 'https://youtube.com/playlist?list=PL1' }))
-    const lines = (await res.text()).trim().split('\n').map((l) => JSON.parse(l))
-    expect(lines.find((l) => l.type === 'error').message).toContain('crashed')
   })
 })

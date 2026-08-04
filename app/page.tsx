@@ -8,8 +8,10 @@ import FormatTabs from '@/components/FormatTabs'
 import type { MediaInfo as MediaInfoType, StatusResult, PlaylistInfo } from '@/types/media'
 import ThemeButton from '@/components/ThemeButton'
 import PlaylistPanel from '@/components/PlaylistPanel'
+import OutputDirRow from '@/components/OutputDirRow'
 import { getYouTubeUrlKind } from '@/lib/validate'
 import { useTheme } from '@/hooks/useTheme'
+import { useOutputDir } from '@/hooks/useOutputDir'
 
 export default function Home() {
   const [status, setStatus] = useState<StatusResult | null>(null)
@@ -19,8 +21,10 @@ export default function Home() {
   const [detecting, setDetecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const theme = useTheme()
+  const outputDir = useOutputDir()
 
   const depsReady = status?.python.found && status?.ytdlp.found
+  const ffmpegReady = status?.ffmpeg.found ?? false
 
   async function fetchStatus(forceRefresh = false) {
     try {
@@ -108,6 +112,8 @@ export default function Home() {
 
       <StatusBar status={status} onRefresh={() => fetchStatus(true)} />
 
+      <OutputDirRow dir={outputDir.dir} onChange={outputDir.setDir} onReset={outputDir.reset} />
+
       <UrlInput
         onDetect={handleDetect}
         disabled={!depsReady}
@@ -130,11 +136,13 @@ export default function Home() {
       {mediaInfo && (
         <div className="space-y-4">
           <MediaInfo info={mediaInfo} />
-          <FormatTabs info={mediaInfo} url={url} />
+          <FormatTabs info={mediaInfo} url={url} outputDir={outputDir.dir} />
         </div>
       )}
 
-      {playlistInfo && <PlaylistPanel info={playlistInfo} url={url} />}
+      {playlistInfo && (
+        <PlaylistPanel info={playlistInfo} url={url} outputDir={outputDir.dir} ffmpegReady={ffmpegReady} />
+      )}
     </main>
   )
 }

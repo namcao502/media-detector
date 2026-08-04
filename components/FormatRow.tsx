@@ -6,8 +6,8 @@ import { isApplePlayable } from '@/lib/audioCompat'
 import DownloadProgress from './DownloadProgress'
 
 type FormatRowProps =
-  | { type: 'video'; format: VideoFormat; url: string; title: string; onDownloadStart: (formatId: string, ext: string) => void }
-  | { type: 'audio'; format: AudioFormat; url: string; title: string; onDownloadStart: (formatId: string, ext: string) => void }
+  | { type: 'video'; format: VideoFormat; url: string; title: string; outputDir: string; onDownloadStart: (formatId: string, ext: string) => void }
+  | { type: 'audio'; format: AudioFormat; url: string; title: string; outputDir: string; onDownloadStart: (formatId: string, ext: string) => void }
 
 function formatFilesize(bytes: number | null): string {
   if (bytes === null) return 'unknown size'
@@ -17,7 +17,7 @@ function formatFilesize(bytes: number | null): string {
   return `${mb.toFixed(0)} MB`
 }
 
-export default function FormatRow({ type, format, url, title, onDownloadStart }: FormatRowProps) {
+export default function FormatRow({ type, format, url, title, outputDir, onDownloadStart }: FormatRowProps) {
   const [percent, setPercent] = useState<number | null>(null)
   const [savedPath, setSavedPath] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
@@ -42,7 +42,7 @@ export default function FormatRow({ type, format, url, title, onDownloadStart }:
       const res = await fetch('/api/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, formatId: format.formatId, title, ext: format.ext }),
+        body: JSON.stringify({ url, formatId: format.formatId, title, ext: format.ext, outputDir }),
       })
 
       if (!res.body) return

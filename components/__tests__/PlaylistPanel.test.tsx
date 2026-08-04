@@ -12,26 +12,45 @@ const info: PlaylistInfo = {
   ],
 }
 
+const PL_URL = 'https://youtube.com/playlist?list=PL1'
+const DIR = 'C:\\dl'
+
 describe('PlaylistPanel', () => {
   it('renders playlist title, track count, and track titles', () => {
-    render(<PlaylistPanel info={info} url="https://youtube.com/playlist?list=PL1" />)
+    render(<PlaylistPanel info={info} url={PL_URL} outputDir={DIR} ffmpegReady />)
     expect(screen.getByText('My Mix')).toBeInTheDocument()
     expect(screen.getByText(/3 tracks/)).toBeInTheDocument()
     expect(screen.getByText(/Song A/)).toBeInTheDocument()
     expect(screen.getByText(/Song C/)).toBeInTheDocument()
   })
 
-  it('posts to /api/playlist/download when Download all audio is clicked', () => {
+  it('posts the audio selection and folder when Download all audio is clicked', () => {
     const fetchMock = global.fetch as jest.Mock
     fetchMock.mockClear()
-    render(<PlaylistPanel info={info} url="https://youtube.com/playlist?list=PL1" />)
+    render(<PlaylistPanel info={info} url={PL_URL} outputDir={DIR} ffmpegReady />)
     fireEvent.click(screen.getByRole('button', { name: /download all audio/i }))
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/playlist/download',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ url: 'https://youtube.com/playlist?list=PL1' }),
+        body: JSON.stringify({ url: PL_URL, outputDir: DIR, mode: 'audio', audioFormat: 'm4a', videoQuality: '1080' }),
       }),
     )
+  })
+
+  it('posts mode:video after switching to the Video tab', () => {
+    const fetchMock = global.fetch as jest.Mock
+    fetchMock.mockClear()
+    render(<PlaylistPanel info={info} url={PL_URL} outputDir={DIR} ffmpegReady />)
+    fireEvent.click(screen.getByRole('button', { name: 'video' }))
+    fireEvent.click(screen.getByRole('button', { name: /download all video/i }))
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as { body: string }).body)
+    expect(body.mode).toBe('video')
+    expect(body.videoQuality).toBe('1080')
+  })
+
+  it('disables the Video tab when ffmpeg is missing', () => {
+    render(<PlaylistPanel info={info} url={PL_URL} outputDir={DIR} ffmpegReady={false} />)
+    expect(screen.getByRole('button', { name: 'video' })).toBeDisabled()
   })
 })

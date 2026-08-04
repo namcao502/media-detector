@@ -3,7 +3,7 @@ import { promisify } from 'util'
 import path from 'path'
 import os from 'os'
 import fs from 'fs'
-import type { MediaInfo, VideoFormat, AudioFormat, PlaylistInfo, PlaylistDownloadLine } from '@/types/media'
+import type { MediaInfo, VideoFormat, AudioFormat, PlaylistInfo, PlaylistDownloadLine, PlaylistFormatSelection } from '@/types/media'
 
 const execAsync = promisify(nodeExec)
 
@@ -171,8 +171,11 @@ export function resolveOutputDir(): string {
   return path.join(documentsDir, 'MediaDetector')
 }
 
-export function ensureOutputDir(): string {
-  const dir = resolveOutputDir()
+// Uses `customDir` when it is a non-empty absolute path (the validation boundary
+// for the user-supplied folder); otherwise falls back to the default location.
+// User input only reaches yt-dlp via ytdlpArgs -> spawn, so it is injection-safe.
+export function ensureOutputDir(customDir?: string): string {
+  const dir = customDir && path.isAbsolute(customDir) ? customDir : resolveOutputDir()
   fs.mkdirSync(dir, { recursive: true })
   return dir
 }
@@ -259,10 +262,41 @@ export function metadataArgs(hasFfmpeg: boolean, ext?: string): string[] {
   return args
 }
 
-export function parsePlaylistItem(line: string): { index: number; total: number } | null {
-  const m = line.match(/Downloading (?:item|video) (\d+) of (\d+)/)
-  if (!m) return null
-  return { index: parseInt(m[1], 10), total: parseInt(m[2], 10) }
+// Builds the yt-dlp format args for a playlist download plus the container ext the
+// output will have. `expectedExt` feeds metadataArgs so --embed-thumbnail is only
+// requested for containers that can hold it (webm cannot -> avoids the embed error
+// and the stray .webp left beside the audio). Pure -- unit-testable without spawning.
+export function playlistFormatArgs(
+  sel: PlaylistFormatSelection,
+  hasFfmpeg: boolean,
+): { formatArgs: string[]; expectedExt: string } {
+  if (sel.mode === 'video') {
+    const q = sel.videoQuality ?? '1080'
+    // Prefer mp4 (h264+aac) so every file is a consistent, thumbnail-embeddable .mp4.
+    const cap = q === 'best' ? '' : `[height<=${q}]`
+    const selector =
+      q === 'best'
+        ? 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+        : `bestvideo${cap}[ext=mp4]+bestaudio[ext=m4a]/best${cap}[ext=mp4]/best${cap}`
+    return { formatArgs: ['-f', selector, '--merge-output-format', 'mp4'], expectedExt: 'mp4' }
+  }
+
+  const fmt = sel.audioFormat ?? 'm4a'
+  if (fmt === 'mp3') {
+    // Re-encode to mp3 (requires ffmpeg); the UI disables this when ffmpeg is absent.
+    return { formatArgs: ['-x', '--audio-format', 'mp3'], expectedExt: 'mp3' }
+  }
+  if (fmt === 'best') {
+    // Native audio, no conversion. Typically opus-in-webm -> report webm so no
+    // thumbnail is requested (webm cannot embed one).
+    return { formatArgs: ['-f', 'bestaudio/best'], expectedExt: 'webm' }
+  }
+  // m4a: with ffmpeg, extract to m4a so every track is a consistent .m4a (remux,
+  // lossless when the source is already AAC). Without ffmpeg, best-effort selection.
+  if (hasFfmpeg) {
+    return { formatArgs: ['-x', '--audio-format', 'm4a'], expectedExt: 'm4a' }
+  }
+  return { formatArgs: ['-f', 'bestaudio[ext=m4a]/bestaudio/best'], expectedExt: 'm4a' }
 }
 
 export function parsePlaylistInfo(jsonStr: string): PlaylistInfo {
@@ -272,68 +306,131 @@ export function parsePlaylistInfo(jsonStr: string): PlaylistInfo {
   return { title: raw.title ?? 'Playlist', count: tracks.length, tracks }
 }
 
-export interface PlaylistDlState {
-  index: number | null // current track (1-based), null before first item
-  total: number
-  dest: string | null // destination path of current track, null until announced
-  downloaded: number // tracks that completed with a destination
-  lastFolder: string | null
+// Parses `--flat-playlist --dump-single-json` output into the playlist title and
+// each entry's video id + title. Sibling of parsePlaylistInfo (used by detect);
+// this one also keeps the id so tracks can be downloaded one at a time.
+export function parsePlaylistEntries(jsonStr: string): { title: string; entries: { id: string; title: string }[] } {
+  const raw = JSON.parse(jsonStr)
+  const rawEntries: Array<{ id?: string | null; title?: string | null } | null> = raw.entries ?? []
+  const entries = rawEntries
+    .filter((e): e is { id?: string | null; title?: string | null } => e !== null && typeof e.id === 'string')
+    .map((e, i) => ({ id: e.id as string, title: e.title ?? `Track ${i + 1}` }))
+  return { title: raw.title ?? 'Playlist', entries }
 }
 
-export const initialPlaylistState: PlaylistDlState = {
-  index: null, total: 0, dest: null, downloaded: 0, lastFolder: null,
+// Sanitizes a playlist title into a safe folder name. Single-video downloads do
+// not populate %(playlist_title)s, so this is injected literally into the path.
+export function sanitizeFolderName(name: string): string {
+  const cleaned = name
+    // eslint-disable-next-line no-control-regex -- strip filesystem-illegal + control chars
+    .replace(/[\\/:*?"<>|\x00-\x1f]/g, '_')
+    .trim()
+    .replace(/[. ]+$/, '')
+  return cleaned || 'Playlist'
 }
 
-// Pure reducer: fold one yt-dlp output line into state + emitted stream lines.
-export function reducePlaylistLine(
-  state: PlaylistDlState,
-  line: string,
-): { state: PlaylistDlState; emits: PlaylistDownloadLine[] } {
-  const emits: PlaylistDownloadLine[] = []
+// Runs a single yt-dlp download, yielding merged stdout+stderr lines; the async
+// generator's RETURN value is the process exit code (0 = success). Like
+// streamCommand, but surfaces the code so callers can tell success from failure.
+export async function* runTrack(args: string[]): AsyncGenerator<string, number> {
+  const proc = spawn(args[0], args.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] })
+  const buffer: string[] = []
+  let notify: (() => void) | null = null
+  let closed = false
+  let exitCode = 1
 
-  const item = parsePlaylistItem(line)
-  if (item) {
-    let downloaded = state.downloaded
-    if (state.index !== null && state.dest) {
-      emits.push({ type: 'track-done', index: state.index, savedPath: state.dest })
-      downloaded += 1
+  const push = (line: string) => { buffer.push(line); notify?.() }
+  proc.stdout.on('data', (c: Buffer) => c.toString('utf8').split('\n').filter(Boolean).forEach(push))
+  proc.stderr.on('data', (c: Buffer) => c.toString('utf8').split('\n').filter(Boolean).forEach(push))
+  proc.on('error', (err: Error) => { push(`ERROR: ${err.message}`); exitCode = 1; closed = true; notify?.() })
+  proc.on('close', (code) => { exitCode = code ?? 1; closed = true; notify?.() })
+
+  while (!closed || buffer.length > 0) {
+    if (buffer.length > 0) {
+      yield buffer.shift()!
+    } else {
+      await new Promise<void>((r) => { notify = r })
+      notify = null
     }
-    emits.push({ type: 'item', index: item.index, total: item.total })
-    return { state: { ...state, index: item.index, total: item.total, dest: null, downloaded }, emits }
   }
-
-  const dest = parseDestination(line)
-  if (dest) {
-    return { state: { ...state, dest, lastFolder: path.dirname(dest) }, emits }
-  }
-
-  const percent = parseProgress(line)
-  if (percent !== null) {
-    emits.push({ type: 'progress', percent })
-    return { state, emits }
-  }
-
-  return { state, emits }
+  return exitCode
 }
 
-// Flush the final track and emit the batch summary.
-export function finalizePlaylist(
-  state: PlaylistDlState,
-  fallbackFolder: string,
-): PlaylistDownloadLine[] {
-  const emits: PlaylistDownloadLine[] = []
-  let downloaded = state.downloaded
-  if (state.index !== null && state.dest) {
-    emits.push({ type: 'track-done', index: state.index, savedPath: state.dest })
-    downloaded += 1
+export interface TrackOutcome {
+  ok: boolean
+  savedPath?: string
+}
+
+// Downloads one track (attempt is 1-based); yields download percent, returns the outcome.
+export type TrackDownloader = (
+  track: { id: string; title: string; index: number },
+  attempt: number,
+) => AsyncGenerator<number, TrackOutcome>
+
+export interface OrchestrateOptions {
+  attemptsPerPhase: number
+  folder: string // absolute destination folder, echoed in the final `done` line
+  backoffMs: number
+  sleep: (ms: number) => Promise<void>
+}
+
+// Two-phase per-track retry engine. Phase 1 tries each track up to attemptsPerPhase,
+// skipping (queuing) failures so the batch continues. Phase 2 re-sweeps the skipped
+// tracks up to attemptsPerPhase; any still failing are marked `track-error`. Pure --
+// the download and sleep are injected, so it is unit-testable without spawning yt-dlp.
+export async function* orchestratePlaylist(
+  tracks: { id: string; title: string; index: number }[],
+  download: TrackDownloader,
+  opts: OrchestrateOptions,
+): AsyncGenerator<PlaylistDownloadLine> {
+  const total = tracks.length
+  let downloaded = 0
+
+  async function* attemptTrack(
+    track: { id: string; title: string; index: number },
+    phase: 1 | 2,
+  ): AsyncGenerator<PlaylistDownloadLine, TrackOutcome> {
+    let outcome: TrackOutcome = { ok: false }
+    for (let attempt = 1; attempt <= opts.attemptsPerPhase; attempt++) {
+      const gen = download(track, attempt)
+      let step = await gen.next()
+      while (!step.done) {
+        yield { type: 'progress', percent: step.value }
+        step = await gen.next()
+      }
+      outcome = step.value
+      if (outcome.ok) return outcome
+      if (attempt < opts.attemptsPerPhase) {
+        yield { type: 'track-retry', index: track.index, attempt, phase }
+        await opts.sleep(opts.backoffMs)
+      }
+    }
+    return outcome
   }
-  const total = state.total || downloaded
-  emits.push({
-    type: 'done',
-    folder: state.lastFolder ?? fallbackFolder,
-    downloaded,
-    total,
-    failed: Math.max(0, total - downloaded),
-  })
-  return emits
+
+  const skipped: { id: string; title: string; index: number }[] = []
+  for (const track of tracks) {
+    yield { type: 'item', index: track.index, total }
+    const outcome = yield* attemptTrack(track, 1)
+    if (outcome.ok) {
+      downloaded += 1
+      yield { type: 'track-done', index: track.index, savedPath: outcome.savedPath ?? '' }
+    } else {
+      yield { type: 'track-skipped', index: track.index }
+      skipped.push(track)
+    }
+  }
+
+  for (const track of skipped) {
+    yield { type: 'item', index: track.index, total }
+    const outcome = yield* attemptTrack(track, 2)
+    if (outcome.ok) {
+      downloaded += 1
+      yield { type: 'track-done', index: track.index, savedPath: outcome.savedPath ?? '' }
+    } else {
+      yield { type: 'track-error', index: track.index, title: track.title }
+    }
+  }
+
+  yield { type: 'done', folder: opts.folder, downloaded, total, failed: total - downloaded }
 }

@@ -20,6 +20,7 @@ describe('FormatRow (video)', () => {
         format={videoFormat}
         url="https://youtube.com/watch?v=x"
         title="Test"
+        outputDir="C:\\dl"
         onDownloadStart={jest.fn()}
       />
     )
@@ -35,6 +36,7 @@ describe('FormatRow (video)', () => {
         format={videoFormat}
         url="https://youtube.com/watch?v=x"
         title="Test"
+        outputDir="C:\\dl"
         onDownloadStart={onDownloadStart}
       />
     )

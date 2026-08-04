@@ -106,6 +106,19 @@ describe('POST /api/download', () => {
     expect(args).not.toContain('--embed-thumbnail')
   })
 
+  it('passes a body-supplied outputDir to ensureOutputDir', async () => {
+    mockStream.mockReturnValue(fakeStream(['[download] 100% of 1.00MiB']))
+
+    const req = new Request('http://localhost/api/download', {
+      method: 'POST',
+      body: JSON.stringify({ url: 'https://youtube.com/watch?v=x', formatId: '140', title: 'Test', ext: 'm4a', outputDir: 'D:\\Music' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    await POST(req)
+
+    expect(mockEnsureDir).toHaveBeenCalledWith('D:\\Music')
+  })
+
   it('returns 400 for invalid URL', async () => {
     mockIsYouTubeUrl.mockReturnValueOnce(false)
 

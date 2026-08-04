@@ -1,9 +1,9 @@
 import {
-  parseProgress, parseMediaInfo, resolveOutputDir, parseDestination,
-  parsePlaylistItem, parsePlaylistInfo,
-  reducePlaylistLine, finalizePlaylist, initialPlaylistState,
-  metadataArgs, firstDirWithFfmpeg,
+  parseProgress, parseMediaInfo, resolveOutputDir, ensureOutputDir, parseDestination,
+  parsePlaylistInfo, parsePlaylistEntries, sanitizeFolderName, orchestratePlaylist,
+  metadataArgs, firstDirWithFfmpeg, playlistFormatArgs,
 } from '../ytdlp'
+import type { TrackDownloader, TrackOutcome } from '../ytdlp'
 import type { PlaylistDownloadLine, PlaylistBatchDoneLine } from '@/types/media'
 import path from 'path'
 import os from 'os'
@@ -94,6 +94,66 @@ describe('resolveOutputDir', () => {
   })
 })
 
+describe('ensureOutputDir', () => {
+  it('uses an absolute custom dir', () => {
+    const custom = fs.mkdtempSync(path.join(os.tmpdir(), 'out-'))
+    try {
+      expect(ensureOutputDir(custom)).toBe(custom)
+    } finally {
+      fs.rmSync(custom, { recursive: true, force: true })
+    }
+  })
+  it('creates the custom dir when missing', () => {
+    const custom = path.join(os.tmpdir(), `out-new-${Date.now()}`)
+    try {
+      ensureOutputDir(custom)
+      expect(fs.existsSync(custom)).toBe(true)
+    } finally {
+      fs.rmSync(custom, { recursive: true, force: true })
+    }
+  })
+  it('falls back to the default for empty or relative input', () => {
+    expect(ensureOutputDir('')).toBe(resolveOutputDir())
+    expect(ensureOutputDir('relative/path')).toBe(resolveOutputDir())
+    expect(ensureOutputDir()).toBe(resolveOutputDir())
+  })
+})
+
+describe('playlistFormatArgs', () => {
+  it('m4a with ffmpeg extracts to a consistent m4a container', () => {
+    const { formatArgs, expectedExt } = playlistFormatArgs({ mode: 'audio', audioFormat: 'm4a' }, true)
+    expect(formatArgs).toEqual(['-x', '--audio-format', 'm4a'])
+    expect(expectedExt).toBe('m4a')
+  })
+  it('m4a without ffmpeg falls back to format selection', () => {
+    const { formatArgs, expectedExt } = playlistFormatArgs({ mode: 'audio', audioFormat: 'm4a' }, false)
+    expect(formatArgs).toEqual(['-f', 'bestaudio[ext=m4a]/bestaudio/best'])
+    expect(expectedExt).toBe('m4a')
+  })
+  it('mp3 re-encodes to mp3', () => {
+    const { formatArgs, expectedExt } = playlistFormatArgs({ mode: 'audio', audioFormat: 'mp3' }, true)
+    expect(formatArgs).toEqual(['-x', '--audio-format', 'mp3'])
+    expect(expectedExt).toBe('mp3')
+  })
+  it('best audio keeps native container and reports webm (no thumbnail)', () => {
+    const { formatArgs, expectedExt } = playlistFormatArgs({ mode: 'audio', audioFormat: 'best' }, true)
+    expect(formatArgs).toEqual(['-f', 'bestaudio/best'])
+    expect(expectedExt).toBe('webm')
+  })
+  it('video 1080 caps height, prefers mp4, and forces mp4 merge', () => {
+    const { formatArgs, expectedExt } = playlistFormatArgs({ mode: 'video', videoQuality: '1080' }, true)
+    expect(formatArgs).toContain('--merge-output-format')
+    expect(formatArgs).toContain('mp4')
+    expect(formatArgs[1]).toContain('height<=1080')
+    expect(formatArgs[1]).toContain('[ext=mp4]')
+    expect(expectedExt).toBe('mp4')
+  })
+  it('video best does not cap height', () => {
+    const { formatArgs } = playlistFormatArgs({ mode: 'video', videoQuality: 'best' }, true)
+    expect(formatArgs[1]).not.toContain('height<=')
+  })
+})
+
 describe('firstDirWithFfmpeg', () => {
   it('returns the first dir containing an ffmpeg binary', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ff-'))
@@ -128,18 +188,6 @@ describe('metadataArgs', () => {
   })
 })
 
-describe('parsePlaylistItem', () => {
-  it('parses "Downloading item N of M"', () => {
-    expect(parsePlaylistItem('[download] Downloading item 3 of 10')).toEqual({ index: 3, total: 10 })
-  })
-  it('parses legacy "Downloading video N of M"', () => {
-    expect(parsePlaylistItem('[download] Downloading video 1 of 5')).toEqual({ index: 1, total: 5 })
-  })
-  it('returns null for non-item lines', () => {
-    expect(parsePlaylistItem('[download] 50% of 3MiB')).toBeNull()
-  })
-})
-
 describe('parsePlaylistInfo', () => {
   it('extracts title, count, and indexed tracks', () => {
     const json = JSON.stringify({ title: 'Mix', entries: [{ title: 'A' }, { title: 'B' }] })
@@ -155,47 +203,100 @@ describe('parsePlaylistInfo', () => {
   })
 })
 
-describe('reducePlaylistLine + finalizePlaylist', () => {
-  it('aggregates a two-track run into item/track-done/done events', () => {
-    const lines = [
-      '[download] Downloading item 1 of 2',
-      '[download] Destination: C:\\out\\Mix\\01 - A.m4a',
-      '[download] 100% of 3MiB',
-      '[download] Downloading item 2 of 2',
-      '[download] Destination: C:\\out\\Mix\\02 - B.m4a',
-      '[download] 100% of 3MiB',
-    ]
-    let state = initialPlaylistState
-    const emits: PlaylistDownloadLine[] = []
-    for (const line of lines) {
-      const r = reducePlaylistLine(state, line)
-      state = r.state
-      emits.push(...r.emits)
-    }
-    emits.push(...finalizePlaylist(state, 'C:\\out'))
+describe('parsePlaylistEntries', () => {
+  it('extracts the playlist title and each entry id + title', () => {
+    const json = JSON.stringify({ title: 'Mix', entries: [{ id: 'x1', title: 'A' }, { id: 'x2', title: 'B' }] })
+    expect(parsePlaylistEntries(json)).toEqual({
+      title: 'Mix',
+      entries: [{ id: 'x1', title: 'A' }, { id: 'x2', title: 'B' }],
+    })
+  })
+  it('drops null entries and entries without an id, defaulting missing titles', () => {
+    const json = JSON.stringify({ title: 'Mix', entries: [null, { title: 'no id' }, { id: 'x3' }] })
+    const { entries } = parsePlaylistEntries(json)
+    expect(entries).toEqual([{ id: 'x3', title: 'Track 1' }])
+  })
+})
 
-    expect(emits.filter((e) => e.type === 'item')).toHaveLength(2)
+describe('sanitizeFolderName', () => {
+  it('replaces filesystem-illegal characters', () => {
+    const out = sanitizeFolderName('a/b\\c:d*e?f"g<h>i|j')
+    expect(out).not.toMatch(/[\\/:*?"<>|]/)
+  })
+  it('trims trailing dots and spaces', () => {
+    expect(sanitizeFolderName('My Mix... ')).toBe('My Mix')
+  })
+  it('falls back to Playlist for empty/whitespace names', () => {
+    expect(sanitizeFolderName('   ')).toBe('Playlist')
+  })
+})
+
+describe('orchestratePlaylist', () => {
+  const noSleep = async () => {}
+  const track = (id: string, index: number) => ({ id, title: id.toUpperCase(), index })
+
+  async function collect(gen: AsyncGenerator<PlaylistDownloadLine>): Promise<PlaylistDownloadLine[]> {
+    const out: PlaylistDownloadLine[] = []
+    for await (const line of gen) out.push(line)
+    return out
+  }
+
+  // Fake downloader: succeeds/fails per (id, call number); records call counts.
+  function makeDownload(
+    ok: (id: string, call: number) => boolean,
+    calls: Record<string, number>,
+  ): TrackDownloader {
+    return async function* (t) {
+      calls[t.id] = (calls[t.id] ?? 0) + 1
+      yield 100 // one progress tick
+      return { ok: ok(t.id, calls[t.id]) } as TrackOutcome
+    }
+  }
+
+  it('downloads every track once when all succeed', async () => {
+    const calls: Record<string, number> = {}
+    const emits = await collect(orchestratePlaylist(
+      [track('a', 1), track('b', 2)],
+      makeDownload(() => true, calls),
+      { attemptsPerPhase: 5, folder: 'C:\\out\\Mix', backoffMs: 0, sleep: noSleep },
+    ))
     expect(emits.filter((e) => e.type === 'track-done')).toHaveLength(2)
     const done = emits.find((e) => e.type === 'done') as PlaylistBatchDoneLine
-    expect(done.downloaded).toBe(2)
-    expect(done.total).toBe(2)
-    expect(done.failed).toBe(0)
-    expect(done.folder).toContain('Mix')
+    expect(done).toMatchObject({ downloaded: 2, total: 2, failed: 0, folder: 'C:\\out\\Mix' })
+    expect(calls).toEqual({ a: 1, b: 1 })
   })
 
-  it('counts a skipped track (no destination) as failed', () => {
-    const lines = [
-      '[download] Downloading item 1 of 2',
-      '[download] Destination: C:\\out\\Mix\\01 - A.m4a',
-      '[download] 100% of 3MiB',
-      '[download] Downloading item 2 of 2', // item 2 fails: no Destination follows
-    ]
-    let state = initialPlaylistState
-    for (const line of lines) state = reducePlaylistLine(state, line).state
-    const finals = finalizePlaylist(state, 'C:\\out')
-    const done = finals.find((e) => e.type === 'done') as PlaylistBatchDoneLine
-    expect(done.downloaded).toBe(1)
-    expect(done.total).toBe(2)
-    expect(done.failed).toBe(1)
+  it('skips a track that fails phase 1 then recovers in phase 2', async () => {
+    const calls: Record<string, number> = {}
+    // 'b' fails its 5 phase-1 attempts, succeeds on the first phase-2 attempt (call 6)
+    const emits = await collect(orchestratePlaylist(
+      [track('a', 1), track('b', 2)],
+      makeDownload((id, call) => (id === 'b' ? call >= 6 : true), calls),
+      { attemptsPerPhase: 5, folder: 'C:\\out', backoffMs: 0, sleep: noSleep },
+    ))
+    expect(emits.some((e) => e.type === 'track-skipped' && e.index === 2)).toBe(true)
+    expect(emits.some((e) => e.type === 'track-retry' && e.phase === 1)).toBe(true)
+    expect(emits.filter((e) => e.type === 'track-done')).toHaveLength(2)
+    const done = emits.find((e) => e.type === 'done') as PlaylistBatchDoneLine
+    expect(done).toMatchObject({ downloaded: 2, failed: 0 })
+    expect(calls.b).toBe(6)
+  })
+
+  it('marks a permanently failing track as error after 5 + 5 attempts', async () => {
+    const calls: Record<string, number> = {}
+    let sleeps = 0
+    const emits = await collect(orchestratePlaylist(
+      [track('a', 1), track('b', 2)],
+      makeDownload((id) => id !== 'b', calls),
+      { attemptsPerPhase: 5, folder: 'C:\\out', backoffMs: 1000, sleep: async () => { sleeps++ } },
+    ))
+    const errs = emits.filter((e) => e.type === 'track-error')
+    expect(errs).toHaveLength(1)
+    expect(errs[0]).toMatchObject({ index: 2, title: 'B' })
+    const done = emits.find((e) => e.type === 'done') as PlaylistBatchDoneLine
+    expect(done).toMatchObject({ downloaded: 1, total: 2, failed: 1 })
+    expect(calls.b).toBe(10) // 5 in phase 1 + 5 in phase 2
+    expect(emits.some((e) => e.type === 'track-retry' && e.phase === 2)).toBe(true)
+    expect(sleeps).toBe(8) // 4 between-attempt waits per phase, both phases
   })
 })

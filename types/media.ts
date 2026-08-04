@@ -59,6 +59,16 @@ export interface DownloadErrorLine {
 
 export type DownloadStreamLine = DownloadProgressLine | DownloadDoneLine | DownloadErrorLine
 
+export type PlaylistFormatMode = 'audio' | 'video'
+export type PlaylistAudioFormat = 'm4a' | 'mp3' | 'best' // 'best' = native, no conversion
+export type PlaylistVideoQuality = '1080' | '720' | 'best'
+
+export interface PlaylistFormatSelection {
+  mode: PlaylistFormatMode
+  audioFormat?: PlaylistAudioFormat
+  videoQuality?: PlaylistVideoQuality
+}
+
 export interface PlaylistTrack {
   index: number // 1-based position in the playlist
   title: string
@@ -82,6 +92,24 @@ export interface PlaylistTrackDoneLine {
   savedPath: string
 }
 
+export interface PlaylistTrackRetryLine {
+  type: 'track-retry'
+  index: number
+  attempt: number
+  phase: 1 | 2
+}
+
+export interface PlaylistTrackSkippedLine {
+  type: 'track-skipped' // failed phase 1; will be re-swept in phase 2
+  index: number
+}
+
+export interface PlaylistTrackErrorLine {
+  type: 'track-error' // failed both phases
+  index: number
+  title: string
+}
+
 export interface PlaylistBatchDoneLine {
   type: 'done'
   folder: string
@@ -96,5 +124,8 @@ export type PlaylistDownloadLine =
   | DownloadProgressLine
   | PlaylistItemLine
   | PlaylistTrackDoneLine
+  | PlaylistTrackRetryLine
+  | PlaylistTrackSkippedLine
+  | PlaylistTrackErrorLine
   | PlaylistBatchDoneLine
   | DownloadErrorLine

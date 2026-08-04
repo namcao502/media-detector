@@ -13,6 +13,7 @@ export async function POST(req: Request): Promise<Response> {
   const formatId = typeof record.formatId === 'string' ? record.formatId : ''
   const title = typeof record.title === 'string' ? record.title : ''
   const ext = typeof record.ext === 'string' ? record.ext : ''
+  const requestedDir = typeof record.outputDir === 'string' ? record.outputDir : undefined
 
   if (!url || !isYouTubeUrl(url)) {
     return NextResponse.json({ error: 'Invalid YouTube URL' }, { status: 400 })
@@ -21,7 +22,7 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ error: 'Missing formatId, title, or ext' }, { status: 400 })
   }
 
-  const outputDir = ensureOutputDir()
+  const outputDir = ensureOutputDir(requestedDir)
   const outputTemplate = path.join(outputDir, '%(title)s.%(ext)s')
   const meta = [...ffmpegLocationArgs(), ...metadataArgs((await checkFfmpeg()).found, ext)]
 
