@@ -231,7 +231,7 @@ export default function StatusBar({ status, onRefresh }: StatusBarProps) {
           {loading ? 'Installing...' : 'Install'}
         </button>
         <a
-          href="https://www.gyan.dev/ffmpeg/builds/"
+          href="https://ffmpeg.org/download.html"
           target="_blank"
           rel="noopener noreferrer"
           className="rounded-full px-4 py-1.5 text-xs font-semibold transition-opacity hover:opacity-80 active:opacity-60"
