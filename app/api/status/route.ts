@@ -27,7 +27,8 @@ async function checkYtdlp(pythonCmd: string): Promise<{ found: boolean; version:
 async function updateYtdlp(pythonCmd: string): Promise<UpdateStatus> {
   // yt-dlp -U self-update refuses for pip/PyPI installs; update the way it was installed.
   // Bare `pip` is often not on PATH; go through the resolved interpreter.
-  const result = await execCommand(`${pythonCmd} -m pip install --upgrade yt-dlp`)
+  // mutagen embeds cover art into mp4/m4a; without it yt-dlp's ffmpeg fallback fails.
+  const result = await execCommand(`${pythonCmd} -m pip install --upgrade yt-dlp mutagen`)
   if (result.code !== 0) return 'failed'
   const out = result.stdout.toLowerCase()
   if (out.includes('successfully installed')) return 'updated'

@@ -27,10 +27,11 @@ npx tsc --noEmit                     # typecheck (no emit)
 | Tool | Check | Install | Required |
 |------|-------|---------|----------|
 | Python 3.8+ | `python`/`python3 --version` | Manual (python.org) | Yes |
-| yt-dlp | `python -m yt_dlp --version` | Auto: `python -m pip install yt-dlp` | Yes |
+| yt-dlp | `python -m yt_dlp --version` | Auto: `python -m pip install yt-dlp mutagen` | Yes |
+| mutagen | (pip, bundled with yt-dlp install) | Auto: installed alongside yt-dlp | Cover art |
 | ffmpeg (+ffprobe) | `ffmpeg -version` (also probes `bin/`, winget/choco shim dirs) | In-app button / PATH / vendored `bin/` | Optional |
 
-`/api/status` checks all three, auto-updates yt-dlp, and caches the result; the UI is disabled until Python + yt-dlp are present. Both pip and yt-dlp are invoked as `python -m ...` (via `pipArgs`/`ytdlpArgs` in `lib/ytdlp.ts`) because a fresh python.org install does not put Python's `Scripts` dir on PATH. yt-dlp is updated with `python -m pip install --upgrade yt-dlp`, not the `yt-dlp -U` self-updater (which refuses for pip installs). ffmpeg is optional: downloads work without it, but embedding metadata + cover art needs it.
+`/api/status` checks all three, auto-updates yt-dlp, and caches the result; the UI is disabled until Python + yt-dlp are present. Both pip and yt-dlp are invoked as `python -m ...` (via `pipArgs`/`ytdlpArgs` in `lib/ytdlp.ts`) because a fresh python.org install does not put Python's `Scripts` dir on PATH. yt-dlp is updated with `python -m pip install --upgrade yt-dlp mutagen`, not the `yt-dlp -U` self-updater (which refuses for pip installs). `mutagen` is installed alongside yt-dlp (install + update routes and the `/api/status` auto-update) because yt-dlp needs mutagen or AtomicParsley to embed cover art into mp4/m4a; its ffmpeg-only fallback fails there ("Unable to embed using ffprobe & ffmpeg"), producing files with no image data. ffmpeg is optional: downloads work without it, but embedding metadata + cover art needs it.
 
 ## Architecture
 

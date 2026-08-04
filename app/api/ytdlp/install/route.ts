@@ -5,7 +5,8 @@ export async function POST(): Promise<Response> {
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        for await (const line of streamCommand(await pipArgs('install', 'yt-dlp'))) {
+        // mutagen embeds cover art into mp4/m4a; without it yt-dlp's ffmpeg fallback fails.
+        for await (const line of streamCommand(await pipArgs('install', 'yt-dlp', 'mutagen'))) {
           controller.enqueue(encoder.encode(line + '\n'))
         }
       } finally {
