@@ -43,7 +43,15 @@ npx tsc --noEmit                     # typecheck (no emit)
 
 ### Streaming responses
 
-Download and install routes return a `ReadableStream` of NDJSON lines; the client reads `res.body.getReader()` and decodes with `new TextDecoder()` (`{ stream: true }` for multi-byte chars across chunks). Download line types (`DownloadStreamLine`): `progress` (`percent`), `done` (`savedPath`), `error` (`message`). Playlist line types: `item`, `progress`, `track-done`, `done`, `error`.
+Download and install routes return a `ReadableStream` of NDJSON lines; the client reads `res.body.getReader()` and decodes with `new TextDecoder()` (`{ stream: true }` for multi-byte chars across chunks). Download line types (`DownloadStreamLine`): `progress`, `phase`, `done` (`savedPath`), `error` (`message`). Playlist line types add `item`, `track-done`, `track-retry`, `track-skipped`, `track-error`, `done`.
+
+### Download progress detail
+
+Both download routes pass `progressTemplateArgs()` (`--newline --progress-template "download:@PROG ..."`), which replaces yt-dlp's human-readable `[download] 42.3% of 3.29MiB at 1.23MiB/s` line with raw numbers, so nothing has to parse units or locale text. `parseProgressLine()` turns a `@PROG` line into a `progress` carrying `percent`, `downloadedBytes`, `totalBytes`, `speedBytesPerSec`, `etaSeconds` and `fragmentIndex/Count` (any field yt-dlp reports as `NA` is omitted); it still falls back to the old `[download] nn%` regex. `parsePhase()` maps yt-dlp's stage prefixes (`[youtube]`/`[info]`, `[download] Destination:`, `[Merger]`, `[ExtractAudio]`/`[Fixup*]`, `[Metadata]`/`[EmbedThumbnail]`/`[ThumbnailsConvertor]`, `[MoveFiles]`) onto a `DownloadPhase`. **ffmpeg's own encode progress is not obtainable** -- yt-dlp captures its subprocess output -- so the phase label is what explains a bar that has stopped moving during merge/embed.
+
+`translateDownloadLines(gen)` is the pure translator (source generator injected, unit-tested without spawning): it emits progress lines, emits a phase line only when the stage *changes*, collects `ERROR:` text, and returns `{ code, savedPath, errorMessage }`. `runDownload(args)` wires it to `runTrack`. Both routes check `code !== 0` and send an `error` line instead of `done` -- previously a failed download still reported "Saved to ...".
+
+Client side, `hooks/useIdleSeconds.ts` ticks once a second while a download is active and the UI warns "no update for Ns" past 5s, since yt-dlp goes silent whenever a transfer stalls. `lib/format.ts` holds the shared `formatBytes`/`formatSpeed`/`formatDuration` helpers (decimal units, `--` for unknown).
 
 ### URL validation
 
@@ -73,4 +81,4 @@ macOS/iOS-styled design system. CSS custom properties in `app/globals.css`: `:ro
 
 ## Testing
 
-Two Jest projects (`jest.config.ts`): `node` for `app/api/**`, `lib/**`, `types/**` (uses `child_process`/`fs`/`os`); `jsdom` for `components/**`, `hooks/**`. Put a test in the matching dir or it runs in the wrong environment. Conventions: mock `lib/ytdlp` + `lib/validate` at module level in API tests; use `fireEvent` in component tests; never assert on CSS class names (components use inline `style`).
+Two Jest projects (`jest.config.ts`): `node` for `app/api/**`, `lib/**`, `types/**` (uses `child_process`/`fs`/`os`); `jsdom` for `components/**`, `hooks/**`. Note `lib/format.ts` is UI-facing but lives in the `node` project, which is fine -- it is pure. Put a test in the matching dir or it runs in the wrong environment. Conventions: mock `lib/ytdlp` + `lib/validate` at module level in API tests; use `fireEvent` in component tests; never assert on CSS class names (components use inline `style`).

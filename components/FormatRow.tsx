@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import type { VideoFormat, AudioFormat, DownloadStreamLine } from '@/types/media'
+import type { VideoFormat, AudioFormat, DownloadStreamLine, DownloadProgressLine } from '@/types/media'
 import { isApplePlayable } from '@/lib/audioCompat'
 import DownloadProgress from './DownloadProgress'
 
@@ -21,6 +21,10 @@ export default function FormatRow({ type, format, url, title, outputDir, onDownl
   const [percent, setPercent] = useState<number | null>(null)
   const [savedPath, setSavedPath] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
+  const [detail, setDetail] = useState<DownloadProgressLine | null>(null)
+  const [phaseLabel, setPhaseLabel] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [lastUpdateAt, setLastUpdateAt] = useState<number | null>(null)
 
   const label =
     type === 'video'
@@ -36,6 +40,10 @@ export default function FormatRow({ type, format, url, title, outputDir, onDownl
     setDownloading(true)
     setPercent(0)
     setSavedPath(null)
+    setDetail(null)
+    setPhaseLabel(null)
+    setError(null)
+    setLastUpdateAt(Date.now())
     onDownloadStart(format.formatId, format.ext)
 
     try {
@@ -45,6 +53,11 @@ export default function FormatRow({ type, format, url, title, outputDir, onDownl
         body: JSON.stringify({ url, formatId: format.formatId, title, ext: format.ext, outputDir }),
       })
 
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setError(typeof body.error === 'string' ? body.error : 'Download request rejected')
+        return
+      }
       if (!res.body) return
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -52,17 +65,27 @@ export default function FormatRow({ type, format, url, title, outputDir, onDownl
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
+        setLastUpdateAt(Date.now())
         const lines = decoder.decode(value, { stream: true }).split('\n').filter(Boolean)
         for (const line of lines) {
           try {
             const parsed = JSON.parse(line) as DownloadStreamLine
-            if (parsed.type === 'progress') setPercent(parsed.percent)
-            if (parsed.type === 'done') { setSavedPath(parsed.savedPath); setPercent(100) }
+            if (parsed.type === 'progress') { setPercent(parsed.percent); setDetail(parsed) }
+            // Outside the download phase there are no byte counters to show, and
+            // leaving the last ones up would suggest a transfer that has stopped.
+            if (parsed.type === 'phase') {
+              setPhaseLabel(parsed.label)
+              if (parsed.phase !== 'downloading') setDetail(null)
+            }
+            if (parsed.type === 'error') { setError(parsed.message); setPhaseLabel(null) }
+            if (parsed.type === 'done') { setSavedPath(parsed.savedPath); setPercent(100); setPhaseLabel(null) }
           } catch {
             // ignore malformed lines
           }
         }
       }
+    } catch {
+      setError('Network error. Is the server still running?')
     } finally {
       setDownloading(false)
     }
@@ -131,7 +154,15 @@ export default function FormatRow({ type, format, url, title, outputDir, onDownl
         </div>
       </div>
       {(percent !== null || savedPath) && (
-        <DownloadProgress percent={percent ?? 0} savedPath={savedPath} />
+        <DownloadProgress
+          percent={percent ?? 0}
+          savedPath={savedPath}
+          detail={detail}
+          phaseLabel={phaseLabel}
+          error={error}
+          lastUpdateAt={lastUpdateAt}
+          active={downloading}
+        />
       )}
     </div>
   )

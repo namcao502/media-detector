@@ -4,10 +4,13 @@ import { useState } from 'react'
 import type {
   PlaylistInfo,
   PlaylistDownloadLine,
+  DownloadProgressLine,
   PlaylistFormatMode,
   PlaylistAudioFormat,
   PlaylistVideoQuality,
 } from '@/types/media'
+import { formatBytes, formatSpeed, formatDuration } from '@/lib/format'
+import { useIdleSeconds } from '@/hooks/useIdleSeconds'
 
 interface PlaylistPanelProps {
   info: PlaylistInfo
@@ -35,6 +38,17 @@ interface Summary {
   failed: number
 }
 
+const STALL_AFTER_SECONDS = 5
+
+// "12.3 MB / 45.6 MB . 2.1 MB/s . ETA 0:14" for the track being downloaded.
+function detailText(detail: DownloadProgressLine): string {
+  return [
+    `${formatBytes(detail.downloadedBytes)} / ${formatBytes(detail.totalBytes)}`,
+    formatSpeed(detail.speedBytesPerSec),
+    `ETA ${formatDuration(detail.etaSeconds)}`,
+  ].join(' . ')
+}
+
 export default function PlaylistPanel({ info, url, outputDir, ffmpegReady }: PlaylistPanelProps) {
   const [downloading, setDownloading] = useState(false)
   const [currentIndex, setCurrentIndex] = useState<number | null>(null)
@@ -44,6 +58,9 @@ export default function PlaylistPanel({ info, url, outputDir, ffmpegReady }: Pla
   const [errored, setErrored] = useState<Set<number>>(new Set())
   const [retry, setRetry] = useState<Record<number, { attempt: number; phase: number }>>({})
   const [summary, setSummary] = useState<Summary | null>(null)
+  const [detail, setDetail] = useState<DownloadProgressLine | null>(null)
+  const [phaseLabel, setPhaseLabel] = useState<string | null>(null)
+  const [lastUpdateAt, setLastUpdateAt] = useState<number | null>(null)
   const [mode, setMode] = useState<PlaylistFormatMode>('audio')
   const [audioFormat, setAudioFormat] = useState<PlaylistAudioFormat>('m4a')
   const [videoQuality, setVideoQuality] = useState<PlaylistVideoQuality>('1080')
@@ -56,6 +73,9 @@ export default function PlaylistPanel({ info, url, outputDir, ffmpegReady }: Pla
     setErrored(new Set())
     setRetry({})
     setSummary(null)
+    setDetail(null)
+    setPhaseLabel(null)
+    setLastUpdateAt(Date.now())
 
     try {
       const res = await fetch('/api/playlist/download', {
@@ -70,12 +90,16 @@ export default function PlaylistPanel({ info, url, outputDir, ffmpegReady }: Pla
       while (true) {
         const { done: streamDone, value } = await reader.read()
         if (streamDone) break
+        setLastUpdateAt(Date.now())
         const lines = decoder.decode(value, { stream: true }).split('\n').filter(Boolean)
         for (const line of lines) {
           try {
             const msg = JSON.parse(line) as PlaylistDownloadLine
-            if (msg.type === 'item') { setCurrentIndex(msg.index); setTotal(msg.total); setPercent(0) }
-            else if (msg.type === 'progress') setPercent(msg.percent)
+            if (msg.type === 'item') { setCurrentIndex(msg.index); setTotal(msg.total); setPercent(0); setDetail(null) }
+            else if (msg.type === 'progress') { setPercent(msg.percent); setDetail(msg) }
+            // Outside the download phase there are no byte counters to show, and
+            // leaving the last ones up would suggest a transfer that has stopped.
+            else if (msg.type === 'phase') { setPhaseLabel(msg.label); if (msg.phase !== 'downloading') setDetail(null) }
             else if (msg.type === 'track-retry') setRetry((prev) => ({ ...prev, [msg.index]: { attempt: msg.attempt, phase: msg.phase } }))
             else if (msg.type === 'track-skipped') setRetry((prev) => { const next = { ...prev }; delete next[msg.index]; return next })
             else if (msg.type === 'track-done') { setDone((prev) => new Set(prev).add(msg.index)); setRetry((prev) => { const next = { ...prev }; delete next[msg.index]; return next }) }
@@ -102,6 +126,8 @@ export default function PlaylistPanel({ info, url, outputDir, ffmpegReady }: Pla
   }
 
   const overallPercent = total > 0 ? Math.round(((done.size + errored.size) / total) * 100) : 0
+  const idleSeconds = useIdleSeconds(lastUpdateAt, downloading)
+  const stalled = downloading && idleSeconds >= STALL_AFTER_SECONDS
 
   function trackStatus(index: number): { label: string; color: string } {
     if (done.has(index)) return { label: 'OK', color: 'var(--status-ok)' }
@@ -200,9 +226,17 @@ export default function PlaylistPanel({ info, url, outputDir, ffmpegReady }: Pla
             <div className="h-full transition-all" style={{ width: `${overallPercent}%`, background: 'var(--accent)' }} />
           </div>
           {downloading && !summary && (
-            <div className="h-1 w-full overflow-hidden rounded-full" style={{ background: 'var(--border)' }}>
-              <div className="h-full transition-all" style={{ width: `${percent}%`, background: 'var(--accent)' }} />
-            </div>
+            <>
+              <div className="h-1 w-full overflow-hidden rounded-full" style={{ background: 'var(--border)' }}>
+                <div className="h-full transition-all" style={{ width: `${percent}%`, background: 'var(--accent)' }} />
+              </div>
+              <div className="flex items-center justify-between text-xs tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                <span>{detail ? detailText(detail) : (phaseLabel ?? 'Starting')}</span>
+                {stalled && (
+                  <span style={{ color: 'var(--text-status-warn)' }}>no update for {idleSeconds}s</span>
+                )}
+              </div>
+            </>
           )}
         </div>
       )}

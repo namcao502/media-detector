@@ -11,9 +11,8 @@ jest.mock('@/lib/ytdlp', () => ({
   playlistFormatArgs: jest.fn().mockReturnValue({ formatArgs: ['-x', '--audio-format', 'm4a'], expectedExt: 'm4a' }),
   parsePlaylistEntries: jest.fn().mockReturnValue({ title: 'Mix', entries: [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }] }),
   sanitizeFolderName: jest.fn((s: string) => s),
-  runTrack: jest.fn(),
-  parseProgress: jest.fn(),
-  parseDestination: jest.fn(),
+  runDownload: jest.fn(),
+  progressTemplateArgs: jest.fn().mockReturnValue(['--newline', '--progress-template', 'download:@PROG']),
   orchestratePlaylist: jest.fn(),
 }))
 jest.mock('@/lib/validate', () => ({ isYouTubeUrl: jest.fn().mockReturnValue(true) }))
@@ -54,6 +53,8 @@ describe('POST /api/playlist/download', () => {
     mockExecArgs.mockResolvedValue(okDump)
     mockOrchestrate.mockReturnValue(fakeLines([
       { type: 'item', index: 1, total: 2 },
+      { type: 'phase', phase: 'downloading', label: 'Downloading' },
+      { type: 'progress', percent: 50, speedBytesPerSec: 1250000, etaSeconds: 12 },
       { type: 'track-done', index: 1, savedPath: 'C:\\out\\Mix\\A.m4a' },
       { type: 'track-error', index: 2, title: 'B' },
       { type: 'done', folder: 'C:\\out\\Mix', downloaded: 1, total: 2, failed: 1 },
@@ -64,6 +65,8 @@ describe('POST /api/playlist/download', () => {
     // the flat-playlist dump ran
     expect(mockExecArgs.mock.calls[0][0]).toEqual(expect.arrayContaining(['--flat-playlist', '--dump-single-json']))
     const lines = await readLines(res)
+    expect(lines.find((l) => l.type === 'phase')).toMatchObject({ label: 'Downloading' })
+    expect(lines.find((l) => l.type === 'progress')).toMatchObject({ speedBytesPerSec: 1250000, etaSeconds: 12 })
     expect(lines.find((l) => l.type === 'track-done' && l.index === 1)).toBeDefined()
     expect(lines.find((l) => l.type === 'track-error' && l.index === 2)).toBeDefined()
     expect(lines.find((l) => l.type === 'done' && l.failed === 1)).toBeDefined()

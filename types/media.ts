@@ -42,9 +42,34 @@ export interface DownloadRequest {
   ext: string
 }
 
+// Byte/speed/ETA fields are optional: yt-dlp reports them as "NA" until the
+// transfer has enough samples, and a live stream has no known total size.
 export interface DownloadProgressLine {
   type: 'progress'
   percent: number
+  downloadedBytes?: number
+  totalBytes?: number
+  speedBytesPerSec?: number
+  etaSeconds?: number
+  fragmentIndex?: number
+  fragmentCount?: number
+}
+
+// Coarse stage of a single yt-dlp run. Only 'downloading' reports a percentage;
+// the ffmpeg-backed stages (merge/convert/embed) report no progress at all, so
+// the UI needs the label to explain why the bar has stopped moving.
+export type DownloadPhase =
+  | 'extracting'
+  | 'downloading'
+  | 'merging'
+  | 'converting'
+  | 'embedding'
+  | 'finishing'
+
+export interface DownloadPhaseLine {
+  type: 'phase'
+  phase: DownloadPhase
+  label: string
 }
 
 export interface DownloadDoneLine {
@@ -57,7 +82,11 @@ export interface DownloadErrorLine {
   message: string
 }
 
-export type DownloadStreamLine = DownloadProgressLine | DownloadDoneLine | DownloadErrorLine
+export type DownloadStreamLine =
+  | DownloadProgressLine
+  | DownloadPhaseLine
+  | DownloadDoneLine
+  | DownloadErrorLine
 
 export type PlaylistFormatMode = 'audio' | 'video'
 export type PlaylistAudioFormat = 'm4a' | 'mp3' | 'best' // 'best' = native, no conversion
@@ -118,10 +147,12 @@ export interface PlaylistBatchDoneLine {
   failed: number
 }
 
-// Reuses DownloadProgressLine ({type:'progress',percent}) for the current track
-// and DownloadErrorLine ({type:'error',message}) for a fatal spawn error.
+// Reuses DownloadProgressLine ({type:'progress',...}) and DownloadPhaseLine for
+// the current track, and DownloadErrorLine ({type:'error',message}) for a fatal
+// spawn error.
 export type PlaylistDownloadLine =
   | DownloadProgressLine
+  | DownloadPhaseLine
   | PlaylistItemLine
   | PlaylistTrackDoneLine
   | PlaylistTrackRetryLine

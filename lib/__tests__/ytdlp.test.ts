@@ -1,29 +1,90 @@
 import {
-  parseProgress, parseMediaInfo, resolveOutputDir, ensureOutputDir, parseDestination,
+  parseProgressLine, parseMediaInfo, resolveOutputDir, ensureOutputDir, parseDestination,
   parsePlaylistInfo, parsePlaylistEntries, sanitizeFolderName, orchestratePlaylist,
-  metadataArgs, firstDirWithFfmpeg, playlistFormatArgs,
+  metadataArgs, firstDirWithFfmpeg, playlistFormatArgs, parsePhase, progressTemplateArgs,
+  translateDownloadLines,
 } from '../ytdlp'
-import type { TrackDownloader, TrackOutcome } from '../ytdlp'
-import type { PlaylistDownloadLine, PlaylistBatchDoneLine } from '@/types/media'
+import type { TrackDownloader, TrackOutcome, DownloadRunResult } from '../ytdlp'
+import type { PlaylistDownloadLine, PlaylistBatchDoneLine, DownloadStreamLine } from '@/types/media'
 import path from 'path'
 import os from 'os'
 import fs from 'fs'
 
-describe('parseProgress', () => {
-  it('parses a standard download progress line', () => {
-    expect(parseProgress('[download]  72.3% of 48.00MiB at 1.23MiB/s ETA 00:12')).toBe(72.3)
+describe('progressTemplateArgs', () => {
+  it('requests newline-separated, machine-readable progress', () => {
+    const args = progressTemplateArgs()
+    expect(args).toContain('--newline')
+    const template = args[args.indexOf('--progress-template') + 1]
+    expect(template).toContain('download:@PROG')
+    expect(template).toContain('%(progress.downloaded_bytes)s')
+    expect(template).toContain('%(progress.speed)s')
+    expect(template).toContain('%(progress.eta)s')
+  })
+})
+
+describe('parseProgressLine', () => {
+  it('parses the template line into percent, bytes, speed and eta', () => {
+    expect(parseProgressLine('@PROG 5000000 20000000 NA 1250000 12 NA NA')).toEqual({
+      type: 'progress',
+      percent: 25,
+      downloadedBytes: 5000000,
+      totalBytes: 20000000,
+      speedBytesPerSec: 1250000,
+      etaSeconds: 12,
+      fragmentIndex: undefined,
+      fragmentCount: undefined,
+    })
   })
 
-  it('parses 100%', () => {
-    expect(parseProgress('[download] 100% of 48.00MiB')).toBe(100)
+  it('falls back to total_bytes_estimate for fragmented downloads', () => {
+    const parsed = parseProgressLine('@PROG 2000000 NA 8000000 500000 10 3 48')
+    expect(parsed).toMatchObject({ percent: 25, totalBytes: 8000000, fragmentIndex: 3, fragmentCount: 48 })
   })
 
-  it('returns null for non-progress lines', () => {
-    expect(parseProgress('[info] Downloading format 140')).toBeNull()
+  it('reports 0% and no metrics while every field is still NA', () => {
+    expect(parseProgressLine('@PROG NA NA NA NA NA NA NA')).toMatchObject({
+      percent: 0,
+      downloadedBytes: undefined,
+      speedBytesPerSec: undefined,
+    })
   })
 
-  it('returns null for empty string', () => {
-    expect(parseProgress('')).toBeNull()
+  it('caps percent at 100 when the total was underestimated', () => {
+    expect(parseProgressLine('@PROG 12000000 10000000 NA 100 0 NA NA')?.percent).toBe(100)
+  })
+
+  it('still parses yt-dlp default human-readable progress lines', () => {
+    expect(parseProgressLine('[download]  72.3% of 48.00MiB at 1.23MiB/s ETA 00:12'))
+      .toEqual({ type: 'progress', percent: 72.3 })
+    expect(parseProgressLine('[download] 100% of 48.00MiB')).toEqual({ type: 'progress', percent: 100 })
+  })
+
+  it('returns null for non-progress lines and empty strings', () => {
+    expect(parseProgressLine('[info] Downloading format 140')).toBeNull()
+    expect(parseProgressLine('')).toBeNull()
+  })
+})
+
+describe('parsePhase', () => {
+  it.each([
+    ['[youtube] dQw4w9WgXcQ: Downloading webpage', 'extracting'],
+    ['[youtube:tab] Extracting URL: https://youtube.com/playlist', 'extracting'],
+    ['[info] dQw4w9WgXcQ: Downloading 1 format(s): 140', 'extracting'],
+    ['[download] Destination: C:\\out\\Test.m4a', 'downloading'],
+    ['[Merger] Merging formats into "C:\\out\\Test.mp4"', 'merging'],
+    ['[ExtractAudio] Destination: C:\\out\\Test.mp3', 'converting'],
+    ['[FixupM4a] Correcting container of "C:\\out\\Test.m4a"', 'converting'],
+    ['[ThumbnailsConvertor] Converting thumbnail "C:\\out\\Test.webp" to png', 'embedding'],
+    ['[Metadata] Adding metadata to "C:\\out\\Test.m4a"', 'embedding'],
+    ['[EmbedThumbnail] mutagen: Adding thumbnail to "C:\\out\\Test.m4a"', 'embedding'],
+    ['Deleting original file C:\\out\\Test.f140.m4a (pass -k to keep)', 'finishing'],
+  ])('maps %s to the %s phase', (line, phase) => {
+    expect(parsePhase(line)).toMatchObject({ type: 'phase', phase })
+  })
+
+  it('returns null for lines that do not mark a stage', () => {
+    expect(parsePhase('@PROG 1 2 NA 3 4 NA NA')).toBeNull()
+    expect(parsePhase('')).toBeNull()
   })
 })
 
@@ -40,6 +101,53 @@ describe('parseDestination', () => {
 
   it('returns null for non-destination lines', () => {
     expect(parseDestination('[download]  72.3% of 48.00MiB')).toBeNull()
+  })
+})
+
+describe('translateDownloadLines', () => {
+  async function* fakeRun(lines: string[], code: number): AsyncGenerator<string, number> {
+    for (const line of lines) yield line
+    return code
+  }
+
+  async function drain(gen: AsyncGenerator<DownloadStreamLine, DownloadRunResult>) {
+    const emitted: DownloadStreamLine[] = []
+    let step = await gen.next()
+    while (!step.done) {
+      emitted.push(step.value)
+      step = await gen.next()
+    }
+    return { emitted, result: step.value }
+  }
+
+  it('emits progress and phase lines and returns the reported path', async () => {
+    const { emitted, result } = await drain(translateDownloadLines(fakeRun([
+      '[youtube] dQw4w9WgXcQ: Downloading webpage',
+      '[download] Destination: C:\\out\\Test.m4a',
+      '@PROG 5000000 20000000 NA 1250000 12 NA NA',
+      '[Metadata] Adding metadata to "C:\\out\\Test.m4a"',
+    ], 0)))
+
+    expect(emitted.filter((l) => l.type === 'phase').map((l) => (l as { phase: string }).phase))
+      .toEqual(['extracting', 'downloading', 'embedding'])
+    expect(emitted.find((l) => l.type === 'progress')).toMatchObject({ percent: 25, speedBytesPerSec: 1250000 })
+    expect(result).toMatchObject({ code: 0, savedPath: 'C:\\out\\Test.m4a' })
+  })
+
+  it('does not repeat a phase line while the stage is unchanged', async () => {
+    const { emitted } = await drain(translateDownloadLines(fakeRun([
+      '[download] Destination: C:\\out\\a.m4a',
+      '@PROG 1 2 NA 1 1 NA NA',
+      '[download] Destination: C:\\out\\a.m4a',
+    ], 0)))
+    expect(emitted.filter((l) => l.type === 'phase')).toHaveLength(1)
+  })
+
+  it('collects ERROR lines and the non-zero exit code', async () => {
+    const { result } = await drain(translateDownloadLines(fakeRun([
+      'ERROR: Video unavailable',
+    ], 1)))
+    expect(result).toMatchObject({ code: 1, errorMessage: 'Video unavailable' })
   })
 })
 
@@ -248,7 +356,7 @@ describe('orchestratePlaylist', () => {
   ): TrackDownloader {
     return async function* (t) {
       calls[t.id] = (calls[t.id] ?? 0) + 1
-      yield 100 // one progress tick
+      yield { type: 'progress', percent: 100 } // one progress tick
       return { ok: ok(t.id, calls[t.id]) } as TrackOutcome
     }
   }

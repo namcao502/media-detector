@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server'
 import path from 'path'
 import {
   execArgs, ensureOutputDir, checkFfmpeg, metadataArgs, ffmpegLocationArgs, ytdlpArgs,
-  playlistFormatArgs, parsePlaylistEntries, sanitizeFolderName, runTrack, orchestratePlaylist,
-  parseProgress, parseDestination,
+  playlistFormatArgs, parsePlaylistEntries, sanitizeFolderName, orchestratePlaylist,
+  runDownload, progressTemplateArgs,
 } from '@/lib/ytdlp'
 import type { TrackDownloader } from '@/lib/ytdlp'
 import { isYouTubeUrl } from '@/lib/validate'
@@ -68,18 +68,17 @@ export async function POST(req: Request): Promise<Response> {
         // chosen preset; metadataArgs embeds tags/cover art when the container allows.
         const download: TrackDownloader = async function* (track) {
           const videoUrl = `https://www.youtube.com/watch?v=${track.id}`
-          const args = await ytdlpArgs(...formatArgs, '--no-playlist', videoUrl, '-o', outputTemplate, '--newline', ...meta)
-          const gen = runTrack(args)
-          let savedPath: string | undefined
+          const args = await ytdlpArgs(
+            ...formatArgs, '--no-playlist', videoUrl, '-o', outputTemplate,
+            ...progressTemplateArgs(), ...meta,
+          )
+          const gen = runDownload(args)
           let step = await gen.next()
           while (!step.done) {
-            const percent = parseProgress(step.value)
-            if (percent !== null) yield percent
-            const dest = parseDestination(step.value)
-            if (dest) savedPath = dest
+            yield step.value
             step = await gen.next()
           }
-          return { ok: step.value === 0, savedPath }
+          return { ok: step.value.code === 0, savedPath: step.value.savedPath }
         }
 
         const tracks = entries.map((e, i) => ({ ...e, index: i + 1 }))

@@ -1,11 +1,10 @@
 import { POST } from '../route'
 
 jest.mock('@/lib/ytdlp', () => ({
-  streamCommand: jest.fn(),
+  runDownload: jest.fn(),
   ensureOutputDir: jest.fn().mockReturnValue('C:\\Users\\test\\Documents\\MediaDetector'),
   resolveOutputDir: jest.fn().mockReturnValue('C:\\Users\\test\\Documents\\MediaDetector'),
-  parseProgress: jest.requireActual('@/lib/ytdlp').parseProgress,
-  parseDestination: jest.requireActual('@/lib/ytdlp').parseDestination,
+  progressTemplateArgs: jest.requireActual('@/lib/ytdlp').progressTemplateArgs,
   checkFfmpeg: jest.fn().mockResolvedValue({ found: false, version: null }),
   metadataArgs: jest.requireActual('@/lib/ytdlp').metadataArgs,
   ffmpegLocationArgs: jest.requireActual('@/lib/ytdlp').ffmpegLocationArgs,
@@ -15,16 +14,24 @@ jest.mock('@/lib/validate', () => ({
   isYouTubeUrl: jest.fn().mockReturnValue(true),
 }))
 
-import { streamCommand, ensureOutputDir, checkFfmpeg } from '@/lib/ytdlp'
+import { runDownload, ensureOutputDir, checkFfmpeg, translateDownloadLines } from '@/lib/ytdlp'
 import { isYouTubeUrl } from '@/lib/validate'
 
-const mockStream = streamCommand as jest.MockedFunction<typeof streamCommand>
+const mockRun = runDownload as jest.MockedFunction<typeof runDownload>
 const mockEnsureDir = ensureOutputDir as jest.MockedFunction<typeof ensureOutputDir>
 const mockIsYouTubeUrl = isYouTubeUrl as jest.MockedFunction<typeof isYouTubeUrl>
 const mockFfmpeg = checkFfmpeg as jest.MockedFunction<typeof checkFfmpeg>
 
-async function* fakeStream(lines: string[]): AsyncGenerator<string> {
-  for (const line of lines) yield line
+const realTranslate: typeof translateDownloadLines = jest.requireActual('@/lib/ytdlp').translateDownloadLines
+
+// Feeds raw yt-dlp lines through the real translator so the route test exercises
+// the actual progress/phase parsing rather than hand-built stream lines.
+function fakeRun(lines: string[], code = 0) {
+  async function* source(): AsyncGenerator<string, number> {
+    for (const line of lines) yield line
+    return code
+  }
+  return realTranslate(source())
 }
 
 describe('POST /api/download', () => {
@@ -32,13 +39,11 @@ describe('POST /api/download', () => {
 
   it('streams progress lines and done event', async () => {
     mockEnsureDir.mockReturnValue('C:\\Users\\test\\Documents\\MediaDetector')
-    mockStream.mockReturnValue(
-      fakeStream([
-        '[download] Destination: C:\\Users\\test\\Documents\\MediaDetector\\Test.m4a',
-        '[download]  50.0% of 48.00MiB at 1.23MiB/s ETA 00:20',
-        '[download] 100% of 48.00MiB at 1.23MiB/s ETA 00:00',
-      ])
-    )
+    mockRun.mockReturnValue(fakeRun([
+      '[download] Destination: C:\\Users\\test\\Documents\\MediaDetector\\Test.m4a',
+      '@PROG 24000000 48000000 NA 1290000 20 NA NA',
+      '@PROG 48000000 48000000 NA 1290000 0 NA NA',
+    ]))
 
     const req = new Request('http://localhost/api/download', {
       method: 'POST',
@@ -60,9 +65,48 @@ describe('POST /api/download', () => {
     expect(doneLine.savedPath).toContain('MediaDetector')
   })
 
-  it('adds metadata embed flags when ffmpeg is present', async () => {
-    mockFfmpeg.mockResolvedValueOnce({ found: true, version: '7.1' })
-    mockStream.mockReturnValue(fakeStream(['[download] 100% of 1.00MiB']))
+  it('streams speed, ETA and byte counters with each progress line', async () => {
+    mockRun.mockReturnValue(fakeRun(['@PROG 24000000 48000000 NA 1290000 20 3 48']))
+
+    const req = new Request('http://localhost/api/download', {
+      method: 'POST',
+      body: JSON.stringify({ url: 'https://youtube.com/watch?v=x', formatId: '140', title: 'Test', ext: 'm4a' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+    const lines = (await (await POST(req)).text()).trim().split('\n').map((l) => JSON.parse(l))
+    expect(lines.find((l) => l.type === 'progress')).toMatchObject({
+      percent: 50,
+      downloadedBytes: 24000000,
+      totalBytes: 48000000,
+      speedBytesPerSec: 1290000,
+      etaSeconds: 20,
+      fragmentIndex: 3,
+      fragmentCount: 48,
+    })
+  })
+
+  it('streams a phase line for each postprocessing stage', async () => {
+    mockRun.mockReturnValue(fakeRun([
+      '[youtube] x: Downloading webpage',
+      '[download] Destination: C:\\out\\Test.mp4',
+      '[Merger] Merging formats into "C:\\out\\Test.mp4"',
+      '[EmbedThumbnail] mutagen: Adding thumbnail to "C:\\out\\Test.mp4"',
+    ]))
+
+    const req = new Request('http://localhost/api/download', {
+      method: 'POST',
+      body: JSON.stringify({ url: 'https://youtube.com/watch?v=x', formatId: '137', title: 'Test', ext: 'mp4' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+    const lines = (await (await POST(req)).text()).trim().split('\n').map((l) => JSON.parse(l))
+    expect(lines.filter((l) => l.type === 'phase').map((l) => l.phase))
+      .toEqual(['extracting', 'downloading', 'merging', 'embedding'])
+  })
+
+  it('requests machine-readable progress from yt-dlp', async () => {
+    mockRun.mockReturnValue(fakeRun([]))
 
     const req = new Request('http://localhost/api/download', {
       method: 'POST',
@@ -71,14 +115,44 @@ describe('POST /api/download', () => {
     })
     await POST(req)
 
-    const args = mockStream.mock.calls[0][0]
+    const args = mockRun.mock.calls[0][0]
+    expect(args).toContain('--newline')
+    expect(args).toContain('--progress-template')
+  })
+
+  it('emits an error instead of done when yt-dlp exits non-zero', async () => {
+    mockRun.mockReturnValue(fakeRun(['ERROR: Video unavailable'], 1))
+
+    const req = new Request('http://localhost/api/download', {
+      method: 'POST',
+      body: JSON.stringify({ url: 'https://youtube.com/watch?v=x', formatId: '140', title: 'Test', ext: 'm4a' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+    const lines = (await (await POST(req)).text()).trim().split('\n').map((l) => JSON.parse(l))
+    expect(lines.find((l) => l.type === 'done')).toBeUndefined()
+    expect(lines.find((l) => l.type === 'error').message).toContain('Video unavailable')
+  })
+
+  it('adds metadata embed flags when ffmpeg is present', async () => {
+    mockFfmpeg.mockResolvedValueOnce({ found: true, version: '7.1' })
+    mockRun.mockReturnValue(fakeRun(['@PROG 1000000 1000000 NA 500000 0 NA NA']))
+
+    const req = new Request('http://localhost/api/download', {
+      method: 'POST',
+      body: JSON.stringify({ url: 'https://youtube.com/watch?v=x', formatId: '140', title: 'Test', ext: 'm4a' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    await POST(req)
+
+    const args = mockRun.mock.calls[0][0]
     expect(args).toContain('--embed-metadata')
     expect(args).toContain('--embed-thumbnail')
   })
 
   it('omits metadata flags when ffmpeg is absent', async () => {
     mockFfmpeg.mockResolvedValueOnce({ found: false, version: null })
-    mockStream.mockReturnValue(fakeStream(['[download] 100% of 1.00MiB']))
+    mockRun.mockReturnValue(fakeRun(['@PROG 1000000 1000000 NA 500000 0 NA NA']))
 
     const req = new Request('http://localhost/api/download', {
       method: 'POST',
@@ -87,12 +161,12 @@ describe('POST /api/download', () => {
     })
     await POST(req)
 
-    expect(mockStream.mock.calls[0][0]).not.toContain('--embed-metadata')
+    expect(mockRun.mock.calls[0][0]).not.toContain('--embed-metadata')
   })
 
   it('skips the thumbnail flag for a webm format (unsupported container)', async () => {
     mockFfmpeg.mockResolvedValueOnce({ found: true, version: '7.1' })
-    mockStream.mockReturnValue(fakeStream(['[download] 100% of 1.00MiB']))
+    mockRun.mockReturnValue(fakeRun(['@PROG 1000000 1000000 NA 500000 0 NA NA']))
 
     const req = new Request('http://localhost/api/download', {
       method: 'POST',
@@ -101,13 +175,13 @@ describe('POST /api/download', () => {
     })
     await POST(req)
 
-    const args = mockStream.mock.calls[0][0]
+    const args = mockRun.mock.calls[0][0]
     expect(args).toContain('--embed-metadata')
     expect(args).not.toContain('--embed-thumbnail')
   })
 
   it('passes a body-supplied outputDir to ensureOutputDir', async () => {
-    mockStream.mockReturnValue(fakeStream(['[download] 100% of 1.00MiB']))
+    mockRun.mockReturnValue(fakeRun(['@PROG 1000000 1000000 NA 500000 0 NA NA']))
 
     const req = new Request('http://localhost/api/download', {
       method: 'POST',
@@ -145,11 +219,11 @@ describe('POST /api/download', () => {
     expect(body.error).toContain('Missing')
   })
 
-  it('emits error line when streamCommand throws', async () => {
-    mockStream.mockReturnValue(
+  it('emits error line when the download generator throws', async () => {
+    mockRun.mockReturnValue(
       (async function* () {
         throw new Error('yt-dlp crashed')
-      })()
+      })() as ReturnType<typeof runDownload>
     )
 
     const req = new Request('http://localhost/api/download', {

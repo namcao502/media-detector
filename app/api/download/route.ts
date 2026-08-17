@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import path from 'path'
-import { streamCommand, ensureOutputDir, parseProgress, parseDestination, checkFfmpeg, metadataArgs, ffmpegLocationArgs, ytdlpArgs } from '@/lib/ytdlp'
+import { ensureOutputDir, runDownload, progressTemplateArgs, checkFfmpeg, metadataArgs, ffmpegLocationArgs, ytdlpArgs } from '@/lib/ytdlp'
 import { isYouTubeUrl } from '@/lib/validate'
 import type { DownloadStreamLine } from '@/types/media'
 
@@ -29,29 +29,34 @@ export async function POST(req: Request): Promise<Response> {
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
     async start(controller) {
-      const args = await ytdlpArgs('-f', formatId, url, '-o', outputTemplate, '--no-playlist', '--newline', ...meta)
+      const send = (msg: DownloadStreamLine) =>
+        controller.enqueue(encoder.encode(JSON.stringify(msg) + '\n'))
+
+      const args = await ytdlpArgs(
+        '-f', formatId, url, '-o', outputTemplate, '--no-playlist',
+        ...progressTemplateArgs(), ...meta,
+      )
 
       try {
-        // yt-dlp emits the final merged path last; we retain the last detected path.
-        let detectedPath: string | null = null
+        const gen = runDownload(args)
+        let step = await gen.next()
+        while (!step.done) {
+          send(step.value)
+          step = await gen.next()
+        }
 
-        for await (const line of streamCommand(args)) {
-          const percent = parseProgress(line)
-          if (percent !== null) {
-            const msg: DownloadStreamLine = { type: 'progress', percent }
-            controller.enqueue(encoder.encode(JSON.stringify(msg) + '\n'))
-          }
-          const dest = parseDestination(line)
-          if (dest) detectedPath = dest
+        // A non-zero exit means the file is missing or truncated -- reporting
+        // `done` here would show "Saved to ..." for a download that failed.
+        const result = step.value
+        if (result.code !== 0) {
+          send({ type: 'error', message: result.errorMessage ?? `yt-dlp exited with code ${result.code}` })
+          return
         }
 
         // Prefer the path yt-dlp reported; fall back to constructed path.
-        const savedPath = detectedPath ?? path.join(outputDir, `${title}.${ext}`)
-        const done: DownloadStreamLine = { type: 'done', savedPath }
-        controller.enqueue(encoder.encode(JSON.stringify(done) + '\n'))
+        send({ type: 'done', savedPath: result.savedPath ?? path.join(outputDir, `${title}.${ext}`) })
       } catch (err) {
-        const error: DownloadStreamLine = { type: 'error', message: String(err) }
-        controller.enqueue(encoder.encode(JSON.stringify(error) + '\n'))
+        send({ type: 'error', message: String(err) })
       } finally {
         controller.close()
       }

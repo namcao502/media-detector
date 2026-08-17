@@ -3,7 +3,10 @@ import { promisify } from 'util'
 import path from 'path'
 import os from 'os'
 import fs from 'fs'
-import type { MediaInfo, VideoFormat, AudioFormat, PlaylistInfo, PlaylistDownloadLine, PlaylistFormatSelection } from '@/types/media'
+import type {
+  MediaInfo, VideoFormat, AudioFormat, PlaylistInfo, PlaylistDownloadLine, PlaylistFormatSelection,
+  DownloadProgressLine, DownloadPhase, DownloadPhaseLine,
+} from '@/types/media'
 
 const execAsync = promisify(nodeExec)
 
@@ -102,10 +105,87 @@ export async function* streamCommand(args: string[]): AsyncGenerator<string> {
   }
 }
 
-export function parseProgress(line: string): number | null {
+// Fields requested from yt-dlp's --progress-template, in emission order. Raw
+// numbers (bytes, bytes/s, seconds) rather than yt-dlp's human-readable
+// "1.23MiB/s" text, so the UI formats them itself and never parses units.
+const PROGRESS_FIELDS = [
+  'downloaded_bytes',
+  'total_bytes',
+  'total_bytes_estimate',
+  'speed',
+  'eta',
+  'fragment_index',
+  'fragment_count',
+] as const
+
+// Marker that distinguishes our template line from yt-dlp's other output.
+const PROGRESS_PREFIX = '@PROG'
+
+// --progress-template replaces the default `[download]  42.3% of ...` line with
+// the machine-readable form above; --newline keeps each update on its own line
+// instead of overwriting with \r (which streamCommand/runTrack cannot split).
+export function progressTemplateArgs(): string[] {
+  const template = PROGRESS_FIELDS.map((f) => `%(progress.${f})s`).join(' ')
+  return ['--newline', '--progress-template', `download:${PROGRESS_PREFIX} ${template}`]
+}
+
+// yt-dlp renders an unset field as the literal "NA".
+function parseNumberField(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === 'NA' || raw === '') return undefined
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : undefined
+}
+
+// Parses one progress update. Handles our --progress-template line first, and
+// falls back to yt-dlp's default human-readable line so a percentage still shows
+// if the template is ever dropped from the args.
+export function parseProgressLine(line: string): DownloadProgressLine | null {
+  if (line.startsWith(PROGRESS_PREFIX)) {
+    const parts = line.slice(PROGRESS_PREFIX.length).trim().split(/\s+/)
+    const [downloaded, total, estimate, speed, eta, fragIndex, fragCount] = parts
+    const downloadedBytes = parseNumberField(downloaded)
+    // Fragmented (DASH/HLS) downloads only know an estimate.
+    const totalBytes = parseNumberField(total) ?? parseNumberField(estimate)
+    const percent =
+      downloadedBytes !== undefined && totalBytes !== undefined && totalBytes > 0
+        ? Math.min(100, Math.round((downloadedBytes / totalBytes) * 1000) / 10)
+        : 0
+    return {
+      type: 'progress',
+      percent,
+      downloadedBytes,
+      totalBytes,
+      speedBytesPerSec: parseNumberField(speed),
+      etaSeconds: parseNumberField(eta),
+      fragmentIndex: parseNumberField(fragIndex),
+      fragmentCount: parseNumberField(fragCount),
+    }
+  }
+
   const match = line.match(/\[download\]\s+([\d.]+)%/)
   if (!match) return null
-  return parseFloat(match[1])
+  return { type: 'progress', percent: parseFloat(match[1]) }
+}
+
+// Which yt-dlp stage a line came from. The ffmpeg-backed postprocessors print a
+// single line when they start and nothing until they finish, so this label is
+// the only signal that a stalled-looking bar is actually still working.
+const PHASE_RULES: { pattern: RegExp; phase: DownloadPhase; label: string }[] = [
+  { pattern: /^\[download\] Destination:/, phase: 'downloading', label: 'Downloading' },
+  { pattern: /^\[Merger\]/, phase: 'merging', label: 'Merging video and audio' },
+  { pattern: /^\[(ExtractAudio|VideoConvertor|VideoRemuxer)\]/, phase: 'converting', label: 'Converting with ffmpeg' },
+  // yt-dlp's FixupM4a/FixupStretched/... postprocessors, also ffmpeg-backed.
+  { pattern: /^\[Fixup\w*\]/, phase: 'converting', label: 'Repairing container' },
+  { pattern: /^\[(Metadata|EmbedThumbnail|ThumbnailsConvertor|EmbedSubtitle)\]/, phase: 'embedding', label: 'Embedding metadata and cover art' },
+  { pattern: /^\[MoveFiles\]|^Deleting original file/, phase: 'finishing', label: 'Finishing up' },
+  { pattern: /^\[(info|generic|youtube(:\w+)?)\]/, phase: 'extracting', label: 'Reading video page' },
+]
+
+export function parsePhase(line: string): DownloadPhaseLine | null {
+  for (const rule of PHASE_RULES) {
+    if (rule.pattern.test(line)) return { type: 'phase', phase: rule.phase, label: rule.label }
+  }
+  return null
 }
 
 export function parseDestination(line: string): string | null {
@@ -356,16 +436,68 @@ export async function* runTrack(args: string[]): AsyncGenerator<string, number> 
   return exitCode
 }
 
+export interface DownloadRunResult {
+  code: number
+  savedPath?: string
+  errorMessage?: string
+}
+
+// Translates raw yt-dlp output into UI stream lines: a progress update per
+// template line, a phase line whenever the stage changes (never repeated), and
+// the final path/exit code/error text as the return value. The source generator
+// is injected, so this is unit-testable without spawning.
+export async function* translateDownloadLines(
+  gen: AsyncGenerator<string, number>,
+): AsyncGenerator<DownloadProgressLine | DownloadPhaseLine, DownloadRunResult> {
+  let savedPath: string | undefined
+  let lastPhase: DownloadPhase | null = null
+  const errors: string[] = []
+
+  let step = await gen.next()
+  while (!step.done) {
+    const line = step.value
+    const progress = parseProgressLine(line)
+    if (progress) yield progress
+
+    const phase = parsePhase(line)
+    if (phase && phase.phase !== lastPhase) {
+      lastPhase = phase.phase
+      yield phase
+    }
+
+    const dest = parseDestination(line)
+    if (dest) savedPath = dest
+
+    if (/^ERROR:/i.test(line)) errors.push(line.replace(/^ERROR:\s*/i, '').trim())
+    step = await gen.next()
+  }
+
+  return {
+    code: step.value,
+    savedPath,
+    errorMessage: errors.length !== 0 ? errors.join(' ') : undefined,
+  }
+}
+
+// Spawns one yt-dlp download and streams it as UI lines. Shared by the
+// single-video route and the per-track playlist downloader.
+export function runDownload(
+  args: string[],
+): AsyncGenerator<DownloadProgressLine | DownloadPhaseLine, DownloadRunResult> {
+  return translateDownloadLines(runTrack(args))
+}
+
 export interface TrackOutcome {
   ok: boolean
   savedPath?: string
 }
 
-// Downloads one track (attempt is 1-based); yields download percent, returns the outcome.
+// Downloads one track (attempt is 1-based); yields progress/phase lines that are
+// passed straight through to the client, returns the outcome.
 export type TrackDownloader = (
   track: { id: string; title: string; index: number },
   attempt: number,
-) => AsyncGenerator<number, TrackOutcome>
+) => AsyncGenerator<DownloadProgressLine | DownloadPhaseLine, TrackOutcome>
 
 export interface OrchestrateOptions {
   attemptsPerPhase: number
@@ -395,7 +527,7 @@ export async function* orchestratePlaylist(
       const gen = download(track, attempt)
       let step = await gen.next()
       while (!step.done) {
-        yield { type: 'progress', percent: step.value }
+        yield step.value
         step = await gen.next()
       }
       outcome = step.value
