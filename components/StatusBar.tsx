@@ -4,6 +4,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { StatusResult } from '@/types/media'
 import LogPanel from './LogPanel'
+import StatusIcon from './StatusIcon'
 
 interface StatusBarProps {
   status: StatusResult | null
@@ -11,6 +12,15 @@ interface StatusBarProps {
 }
 
 type RowState = 'ok' | 'error' | 'warn'
+
+interface DepRowData {
+  label: string
+  state: RowState
+  message: string
+  // Compact form for the collapsed summary line, e.g. "Python 3.12.2".
+  summary: string
+  action: ReactNode
+}
 
 async function streamToLines(
   url: string,
@@ -28,24 +38,36 @@ async function streamToLines(
   }
 }
 
-function DepRow({
-  label,
-  state,
-  message,
-  action,
-}: {
-  label: string
-  state: RowState
-  message: string
-  action?: ReactNode
-}) {
-  const dotColor =
-    state === 'ok'
-      ? 'var(--status-ok)'
-      : state === 'error'
-        ? 'var(--status-error)'
-        : 'var(--status-warn)'
+const PILL_BASE =
+  'rounded-full px-4 py-1.5 text-xs font-semibold transition-opacity hover:opacity-90 active:opacity-70 disabled:opacity-50'
 
+function PrimaryPill({ children, ...rest }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button {...rest} className={`${PILL_BASE} text-white`} style={{ background: 'var(--accent)' }}>
+      {children}
+    </button>
+  )
+}
+
+function SecondaryLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={PILL_BASE}
+      style={{
+        background: 'var(--bg-fill)',
+        color: 'var(--text-secondary)',
+        border: '1px solid var(--border)',
+      }}
+    >
+      {children}
+    </a>
+  )
+}
+
+function DepRow({ label, state, message, action }: DepRowData) {
   const titleColor =
     state === 'ok'
       ? 'var(--text-primary)'
@@ -62,20 +84,14 @@ function DepRow({
 
   const rowStyle =
     state === 'ok'
-      ? { background: 'var(--bg-card)', borderColor: 'var(--border)' }
+      ? { background: 'transparent' }
       : state === 'error'
-        ? { background: 'var(--bg-status-error)', borderColor: 'var(--border-status-error)' }
-        : { background: 'var(--bg-status-warn)', borderColor: 'var(--border-status-warn)' }
+        ? { background: 'var(--bg-status-error)' }
+        : { background: 'var(--bg-status-warn)' }
 
   return (
-    <div
-      className="flex items-center gap-3 rounded-xl border px-4 py-3"
-      style={rowStyle}
-    >
-      <span
-        className="h-2 w-2 flex-shrink-0 rounded-full"
-        style={{ background: dotColor }}
-      />
+    <div className="flex items-center gap-3 rounded-xl px-3 py-2" style={rowStyle}>
+      <StatusIcon kind={state === 'ok' ? 'check' : state} size={14} />
       <div className="min-w-0 flex-1">
         <div className="text-sm font-semibold" style={{ color: titleColor }}>
           {label}
@@ -89,10 +105,118 @@ function DepRow({
   )
 }
 
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 150ms' }}
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  )
+}
+
+// Builds the three dependency rows. Split out so the summary line and the
+// expanded list are always derived from exactly the same data.
+function buildRows(
+  status: StatusResult,
+  loading: boolean,
+  install: (endpoint: string) => void,
+): DepRowData[] {
+  const python: DepRowData = status.python.found
+    ? {
+        label: 'Python',
+        state: 'ok',
+        message: `Version ${status.python.version} detected`,
+        summary: `Python ${status.python.version}`,
+        action: null,
+      }
+    : {
+        label: 'Python',
+        state: 'error',
+        message: 'Not found -- install Python 3.8+ to continue',
+        summary: 'Python missing',
+        action: <SecondaryLink href="https://python.org/downloads">python.org &rarr;</SecondaryLink>,
+      }
+
+  let ytdlp: DepRowData
+  if (!status.ytdlp.found) {
+    ytdlp = {
+      label: 'yt-dlp',
+      state: 'error',
+      message: 'Not installed -- required to detect and download media',
+      summary: 'yt-dlp missing',
+      action: status.python.found ? (
+        <PrimaryPill onClick={() => install('/api/ytdlp/install')} disabled={loading}>
+          {loading ? 'Installing...' : 'Install'}
+        </PrimaryPill>
+      ) : null,
+    }
+  } else if (status.ytdlp.updateStatus === 'failed') {
+    ytdlp = {
+      label: 'yt-dlp',
+      state: 'warn',
+      message: 'Update failed -- click Retry to try again',
+      summary: `yt-dlp ${status.ytdlp.version} (update failed)`,
+      action: (
+        <PrimaryPill onClick={() => install('/api/ytdlp/update')} disabled={loading}>
+          {loading ? 'Retrying...' : 'Retry'}
+        </PrimaryPill>
+      ),
+    }
+  } else {
+    const suffix =
+      status.ytdlp.updateStatus === 'updated' ? ' -- updated' :
+      status.ytdlp.updateStatus === 'up-to-date' ? ' -- up to date' : ''
+    ytdlp = {
+      label: 'yt-dlp',
+      state: 'ok',
+      message: `Version ${status.ytdlp.version}${suffix}`,
+      summary: `yt-dlp ${status.ytdlp.version}`,
+      action: null,
+    }
+  }
+
+  // ffmpeg is optional: downloads work without it, but metadata/thumbnails need it.
+  const ffmpeg: DepRowData = status.ffmpeg.found
+    ? {
+        label: 'ffmpeg',
+        state: 'ok',
+        message: `Version ${status.ffmpeg.version} detected -- metadata & thumbnails embedded`,
+        summary: `ffmpeg ${status.ffmpeg.version}`,
+        action: null,
+      }
+    : {
+        label: 'ffmpeg',
+        state: 'warn',
+        message: 'Not found -- install ffmpeg to embed metadata & cover art',
+        summary: 'ffmpeg missing',
+        action: (
+          <div className="flex items-center gap-2">
+            <PrimaryPill onClick={() => install('/api/ffmpeg/install')} disabled={loading}>
+              {loading ? 'Installing...' : 'Install'}
+            </PrimaryPill>
+            <SecondaryLink href="https://ffmpeg.org/download.html">manual &rarr;</SecondaryLink>
+          </div>
+        ),
+      }
+
+  return [python, ytdlp, ffmpeg]
+}
+
 export default function StatusBar({ status, onRefresh }: StatusBarProps) {
   const [loading, setLoading] = useState(false)
   const [logLines, setLogLines] = useState<string[]>([])
   const [showLog, setShowLog] = useState(false)
+  const [expanded, setExpanded] = useState(false)
 
   async function handleInstall(endpoint: string) {
     setLoading(true)
@@ -110,149 +234,87 @@ export default function StatusBar({ status, onRefresh }: StatusBarProps) {
     }
   }
 
+  const cardStyle = { background: 'var(--bg-card)', borderColor: 'var(--border)' }
+
   if (!status) {
     return (
-      <div className="flex flex-col gap-2">
-        {(['Python', 'yt-dlp', 'ffmpeg'] as const).map((name) => (
-          <div
-            key={name}
-            className="flex items-center gap-3 rounded-xl border px-4 py-3"
-            style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
-          >
-            <span
-              className="h-2 w-2 flex-shrink-0 animate-pulse rounded-full"
-              style={{ background: 'var(--text-muted)' }}
-            />
-            <div>
-              <div
-                className="text-sm font-semibold"
-                style={{ color: 'var(--text-primary)' }}
-              >
-                {name}
-              </div>
-              <div className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>
-                Checking...
-              </div>
-            </div>
-          </div>
-        ))}
+      <div className="flex items-center gap-3 rounded-2xl border px-4 py-3" style={cardStyle}>
+        <span
+          className="h-3.5 w-3.5 flex-shrink-0 animate-pulse rounded-full"
+          style={{ background: 'var(--text-muted)' }}
+        />
+        <span className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>
+          Checking dependencies...
+        </span>
       </div>
     )
   }
 
-  // Python row
-  let pythonState: RowState
-  let pythonMessage: string
-  let pythonAction: ReactNode = null
+  const rows = buildRows(status, loading, handleInstall)
+  const problems = rows.filter((r) => r.state !== 'ok')
+  const healthy = problems.length === 0
+  // Problems always stay open -- there is an action to take, so hiding it would
+  // be the one case where collapsing costs the user something.
+  const open = healthy ? expanded : true
 
-  if (!status.python.found) {
-    pythonState = 'error'
-    pythonMessage = 'Not found -- install Python 3.8+ to continue'
-    pythonAction = (
-      <a
-        href="https://python.org/downloads"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="rounded-full px-4 py-1.5 text-xs font-semibold transition-opacity hover:opacity-80 active:opacity-60"
-        style={{
-          background: 'var(--bg-fill)',
-          color: 'var(--text-secondary)',
-          border: '1px solid var(--border)',
-        }}
-      >
-        python.org &rarr;
-      </a>
-    )
-  } else {
-    pythonState = 'ok'
-    pythonMessage = `Version ${status.python.version} detected`
-  }
+  const headline = healthy
+    ? 'Ready'
+    : `${problems.length} ${problems.length === 1 ? 'problem' : 'problems'}`
 
-  // yt-dlp row
-  let ytdlpState: RowState
-  let ytdlpMessage: string
-  let ytdlpAction: ReactNode = null
+  const subline = rows.map((r) => r.summary).join(' . ')
 
-  if (!status.ytdlp.found) {
-    ytdlpState = 'error'
-    ytdlpMessage = 'Not installed -- required to detect and download media'
-    if (status.python.found) {
-      ytdlpAction = (
+  return (
+    <div className="rounded-2xl border" style={cardStyle}>
+      <div className="flex items-center gap-3 px-4 py-3">
+        <StatusIcon
+          kind={healthy ? 'check' : problems.some((p) => p.state === 'error') ? 'error' : 'warn'}
+          size={16}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+            {headline}
+          </div>
+          <div className="mt-0.5 truncate text-xs" style={{ color: 'var(--text-secondary)' }}>
+            {subline}
+          </div>
+        </div>
         <button
-          onClick={() => handleInstall('/api/ytdlp/install')}
-          disabled={loading}
-          className="rounded-full px-4 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 active:opacity-70 disabled:opacity-50"
-          style={{ background: 'var(--accent)' }}
-        >
-          {loading ? 'Installing...' : 'Install'}
-        </button>
-      )
-    }
-  } else if (status.ytdlp.updateStatus === 'failed') {
-    ytdlpState = 'warn'
-    ytdlpMessage = 'Update failed -- click Retry to try again'
-    ytdlpAction = (
-      <button
-        onClick={() => handleInstall('/api/ytdlp/update')}
-        disabled={loading}
-        className="rounded-full px-4 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 active:opacity-70 disabled:opacity-50"
-        style={{ background: 'var(--accent)' }}
-      >
-        {loading ? 'Retrying...' : 'Retry'}
-      </button>
-    )
-  } else {
-    ytdlpState = 'ok'
-    const suffix =
-      status.ytdlp.updateStatus === 'updated' ? ' -- updated' :
-      status.ytdlp.updateStatus === 'up-to-date' ? ' -- up to date' : ''
-    ytdlpMessage = `Version ${status.ytdlp.version}${suffix}`
-  }
-
-  // ffmpeg row -- optional: downloads work without it, but metadata/thumbnails need it.
-  let ffmpegState: RowState
-  let ffmpegMessage: string
-  let ffmpegAction: ReactNode = null
-
-  if (status.ffmpeg.found) {
-    ffmpegState = 'ok'
-    ffmpegMessage = `Version ${status.ffmpeg.version} detected -- metadata & thumbnails embedded`
-  } else {
-    ffmpegState = 'warn'
-    ffmpegMessage = 'Not found -- install ffmpeg to embed metadata & cover art'
-    ffmpegAction = (
-      <div className="flex items-center gap-2">
-        <button
-          onClick={() => handleInstall('/api/ffmpeg/install')}
-          disabled={loading}
-          className="rounded-full px-4 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 active:opacity-70 disabled:opacity-50"
-          style={{ background: 'var(--accent)' }}
-        >
-          {loading ? 'Installing...' : 'Install'}
-        </button>
-        <a
-          href="https://ffmpeg.org/download.html"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rounded-full px-4 py-1.5 text-xs font-semibold transition-opacity hover:opacity-80 active:opacity-60"
+          onClick={onRefresh}
+          className={PILL_BASE}
           style={{
             background: 'var(--bg-fill)',
             color: 'var(--text-secondary)',
             border: '1px solid var(--border)',
           }}
         >
-          manual &rarr;
-        </a>
+          Recheck
+        </button>
+        {healthy && (
+          <button
+            onClick={() => setExpanded((prev) => !prev)}
+            aria-expanded={expanded}
+            aria-label={expanded ? 'Hide dependency details' : 'Show dependency details'}
+            className="flex h-7 w-7 items-center justify-center rounded-full transition-opacity hover:opacity-70"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            <Chevron open={expanded} />
+          </button>
+        )}
       </div>
-    )
-  }
 
-  return (
-    <div className="flex flex-col gap-2">
-      <DepRow label="Python" state={pythonState} message={pythonMessage} action={pythonAction} />
-      <DepRow label="yt-dlp" state={ytdlpState} message={ytdlpMessage} action={ytdlpAction} />
-      <DepRow label="ffmpeg" state={ffmpegState} message={ffmpegMessage} action={ffmpegAction} />
-      <LogPanel lines={logLines} visible={showLog} />
+      {open && (
+        <div className="flex flex-col gap-1 px-2 pb-2">
+          {rows.map((row) => (
+            <DepRow key={row.label} {...row} />
+          ))}
+        </div>
+      )}
+
+      {showLog && logLines.length > 0 && (
+        <div className="px-4 pb-3">
+          <LogPanel lines={logLines} visible={showLog} />
+        </div>
+      )}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { render, screen, act } from '@testing-library/react'
+import { render, screen, act, fireEvent, waitFor } from '@testing-library/react'
 import DownloadProgress from '../DownloadProgress'
 
 describe('DownloadProgress', () => {
@@ -9,9 +9,61 @@ describe('DownloadProgress', () => {
   })
 
   it('shows Open Folder button when savedPath is set', () => {
-    render(<DownloadProgress percent={100} savedPath="C:\\Users\\test\\Documents\\MediaDetector\\test.mp4" />)
+    render(<DownloadProgress percent={100} savedPath={'C:\\Users\\test\\Documents\\MediaDetector\\test.mp4'} />)
     expect(screen.getByRole('button', { name: /open folder/i })).toBeInTheDocument()
     expect(screen.getByText(/Saved to/i)).toBeInTheDocument()
+  })
+
+  it('names the folder the file actually went to, not a hardcoded default', () => {
+    render(<DownloadProgress percent={100} savedPath={'D:\\Music\\Rips\\test.m4a'} />)
+    expect(screen.getByText('Saved to D:\\Music\\Rips')).toBeInTheDocument()
+  })
+
+  it('marks a finished download with a verified icon and drops the bar', () => {
+    render(<DownloadProgress percent={100} savedPath={'D:\\Music\\test.m4a'} />)
+    expect(screen.getByRole('img', { name: /download complete/i })).toBeInTheDocument()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+  })
+
+  it('posts the parent folder of a POSIX path with its slashes intact', async () => {
+    const fetchMock = global.fetch as jest.Mock
+    fetchMock.mockClear()
+    render(<DownloadProgress percent={100} savedPath="/Users/me/Music/test.m4a" />)
+
+    fireEvent.click(screen.getByRole('button', { name: /open folder/i }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as { body: string }).body)
+    expect(body.path).toBe('/Users/me/Music')
+  })
+
+  it('surfaces a failure from the open-folder request', async () => {
+    const fetchMock = global.fetch as jest.Mock
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      json: () => Promise.resolve({ error: 'Access denied' }),
+    } as unknown as Response)
+    render(<DownloadProgress percent={100} savedPath={'D:\\Music\\test.m4a'} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /open folder/i }))
+    expect(await screen.findByText('Access denied')).toBeInTheDocument()
+  })
+
+  it('reports a cancelled download without calling it an error', () => {
+    render(<DownloadProgress percent={42} savedPath={null} cancelled />)
+    expect(screen.getByRole('img', { name: /download cancelled/i })).toBeInTheDocument()
+    expect(screen.getByText(/partial file may remain/i)).toBeInTheDocument()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+  })
+
+  it('prefers the saved state over the cancelled flag when the file landed', () => {
+    render(<DownloadProgress percent={100} savedPath={'D:\\Music\\test.m4a'} cancelled />)
+    expect(screen.getByRole('img', { name: /download complete/i })).toBeInTheDocument()
+  })
+
+  it('shows an error icon and no bar when the download failed', () => {
+    render(<DownloadProgress percent={30} savedPath={null} error="Video unavailable" />)
+    expect(screen.getByRole('img', { name: /download failed/i })).toBeInTheDocument()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
   })
 
   it('shows transferred bytes, speed and ETA', () => {

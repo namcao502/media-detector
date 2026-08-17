@@ -22,6 +22,10 @@ export interface MediaInfo {
   duration: number
   thumbnail: string
   viewCount: number | null
+  // Music metadata, set by YouTube for Topic/YouTube Music entries and null
+  // otherwise. Used to predict the download filename in the UI.
+  artist: string | null
+  track: string | null
   videoFormats: VideoFormat[]
   audioFormats: AudioFormat[]
 }
@@ -101,6 +105,8 @@ export interface PlaylistFormatSelection {
 export interface PlaylistTrack {
   index: number // 1-based position in the playlist
   title: string
+  // Uploading channel, so the client previews the same name the server builds.
+  author: string | null
 }
 
 export interface PlaylistInfo {
@@ -145,6 +151,9 @@ export interface PlaylistBatchDoneLine {
   downloaded: number
   total: number
   failed: number
+  // True when the batch stopped early because the user cancelled, so `failed`
+  // counts tracks never attempted rather than tracks that went wrong.
+  cancelled?: boolean
 }
 
 // Reuses DownloadProgressLine ({type:'progress',...}) and DownloadPhaseLine for

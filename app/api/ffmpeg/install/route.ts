@@ -2,8 +2,8 @@ import { streamCommand, execCommand } from '@/lib/ytdlp'
 
 // Installs ffmpeg (which bundles ffprobe) via a platform-appropriate package
 // manager, streaming progress as plain text. Windows: winget (user-scope, no
-// admin) then Chocolatey. macOS: Homebrew (user-owned, no sudo). Linux: cannot
-// elevate from a localhost app, so it prints the sudo command for the user to run.
+// admin) then Chocolatey. macOS: Homebrew (user-owned, no sudo). Those are the
+// only supported platforms.
 export async function POST(): Promise<Response> {
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
@@ -39,22 +39,9 @@ export async function POST(): Promise<Response> {
             emit('then run:  brew install ffmpeg')
           }
         } else {
-          // Linux -- a localhost app cannot run sudo, so guide the user instead.
-          emit('On Linux, install ffmpeg with your package manager in a terminal:')
-          const hasDnf = (await execCommand('dnf --version')).code === 0
-          const hasApt = !hasDnf && (await execCommand('apt-get --version')).code === 0
-          const hasPacman = !hasDnf && !hasApt && (await execCommand('pacman --version')).code === 0
-          if (hasDnf) {
-            emit('  sudo dnf install ffmpeg')
-            emit('(Fedora ships a limited ffmpeg-free; enable RPM Fusion for the full build: https://rpmfusion.org)')
-          } else if (hasApt) {
-            emit('  sudo apt install ffmpeg')
-          } else if (hasPacman) {
-            emit('  sudo pacman -S ffmpeg')
-          } else {
-            emit('  use your distro package manager to install the ffmpeg package')
-          }
-          emit('Then click Recheck -- ffmpeg on PATH is detected automatically.')
+          emit(`Automatic ffmpeg install is not supported on ${process.platform}.`)
+          emit('This app supports Windows and macOS.')
+          emit('Install ffmpeg yourself and put it on PATH, then click Recheck.')
         }
 
         if (args) {

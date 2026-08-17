@@ -1,4 +1,24 @@
-import { formatBytes, formatSpeed, formatDuration } from '../format'
+import { formatBytes, formatSpeed, formatDuration, parentDir } from '../format'
+
+describe('parentDir', () => {
+  it('splits a Windows path and keeps backslashes', () => {
+    expect(parentDir('C:\\Users\\me\\Documents\\MediaDetector\\song.m4a')).toBe(
+      'C:\\Users\\me\\Documents\\MediaDetector',
+    )
+  })
+
+  it('splits a POSIX path and keeps forward slashes', () => {
+    expect(parentDir('/Users/me/Music/song.m4a')).toBe('/Users/me/Music')
+  })
+
+  it('returns the root for a file directly under POSIX root', () => {
+    expect(parentDir('/song.m4a')).toBe('/')
+  })
+
+  it('returns an empty string when there is no separator', () => {
+    expect(parentDir('song.m4a')).toBe('')
+  })
+})
 
 describe('formatBytes', () => {
   it('scales through decimal units', () => {

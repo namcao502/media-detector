@@ -1,4 +1,5 @@
 import { exec as nodeExec, spawn } from 'child_process'
+import type { ChildProcess } from 'child_process'
 import { promisify } from 'util'
 import path from 'path'
 import os from 'os'
@@ -188,6 +189,26 @@ export function parsePhase(line: string): DownloadPhaseLine | null {
   return null
 }
 
+// yt-dlp downloads the cover art to a sibling file and deletes it once the
+// embed postprocessor has run. A download that fails or is cancelled never
+// reaches that step, orphaning the image next to the media. Neither --paths nor
+// `-o thumbnail:` redirects it (verified), so the path is captured here and the
+// file removed on a non-zero exit.
+export function parseThumbnailPath(line: string): string | null {
+  const match = line.match(/^\[info\]\s+Writing\s+\w+\s+thumbnail(?:\s+\S+)?\s+to:\s*(.+)$/)
+  return match ? match[1].trim() : null
+}
+
+// Best-effort: a thumbnail we could not delete is untidy, never fatal.
+export function removeStrayThumbnail(thumbnailPath: string | undefined): void {
+  if (!thumbnailPath) return
+  try {
+    fs.rmSync(thumbnailPath, { force: true })
+  } catch {
+    // file already gone, or locked by another process
+  }
+}
+
 export function parseDestination(line: string): string | null {
   const downloadMatch = line.match(/\[download\] Destination: (.+)$/)
   if (downloadMatch) return downloadMatch[1].trim()
@@ -241,6 +262,8 @@ export function parseMediaInfo(jsonStr: string): MediaInfo {
     duration: raw.duration ?? 0,
     thumbnail: raw.thumbnail ?? '',
     viewCount: raw.view_count ?? null,
+    artist: raw.artist ?? null,
+    track: raw.track ?? null,
     videoFormats,
     audioFormats,
   }
@@ -381,20 +404,47 @@ export function playlistFormatArgs(
 
 export function parsePlaylistInfo(jsonStr: string): PlaylistInfo {
   const raw = JSON.parse(jsonStr)
-  const entries: Array<{ title?: string | null } | null> = raw.entries ?? []
-  const tracks = entries.map((e, i) => ({ index: i + 1, title: e?.title ?? `Track ${i + 1}` }))
+  interface RawEntry {
+    title?: string | null
+    uploader?: string | null
+    channel?: string | null
+  }
+  const entries: Array<RawEntry | null> = raw.entries ?? []
+  const tracks = entries.map((e, i) => ({
+    index: i + 1,
+    title: e?.title ?? `Track ${i + 1}`,
+    author: e?.uploader ?? e?.channel ?? null,
+  }))
   return { title: raw.title ?? 'Playlist', count: tracks.length, tracks }
+}
+
+export interface PlaylistEntry {
+  id: string
+  title: string
+  // Per-entry channel, used to strip a duplicated author prefix from the title.
+  // A flat dump carries no music `artist` field, only the uploading channel.
+  author: string | null
 }
 
 // Parses `--flat-playlist --dump-single-json` output into the playlist title and
 // each entry's video id + title. Sibling of parsePlaylistInfo (used by detect);
 // this one also keeps the id so tracks can be downloaded one at a time.
-export function parsePlaylistEntries(jsonStr: string): { title: string; entries: { id: string; title: string }[] } {
+export function parsePlaylistEntries(jsonStr: string): { title: string; entries: PlaylistEntry[] } {
   const raw = JSON.parse(jsonStr)
-  const rawEntries: Array<{ id?: string | null; title?: string | null } | null> = raw.entries ?? []
+  interface RawEntry {
+    id?: string | null
+    title?: string | null
+    uploader?: string | null
+    channel?: string | null
+  }
+  const rawEntries: Array<RawEntry | null> = raw.entries ?? []
   const entries = rawEntries
-    .filter((e): e is { id?: string | null; title?: string | null } => e !== null && typeof e.id === 'string')
-    .map((e, i) => ({ id: e.id as string, title: e.title ?? `Track ${i + 1}` }))
+    .filter((e): e is RawEntry => e !== null && typeof e.id === 'string')
+    .map((e, i) => ({
+      id: e.id as string,
+      title: e.title ?? `Track ${i + 1}`,
+      author: e.uploader ?? e.channel ?? null,
+    }))
   return { title: raw.title ?? 'Playlist', entries }
 }
 
@@ -409,10 +459,27 @@ export function sanitizeFolderName(name: string): string {
   return cleaned || 'Playlist'
 }
 
+// Kills a spawned download and everything it started. yt-dlp runs ffmpeg as a
+// child, and on Windows `proc.kill()` only reaps the direct child -- the encoder
+// would keep running and holding the output file open -- so shell out to taskkill
+// with /T. On macOS yt-dlp handles SIGTERM and tears its own children down.
+export function killProcessTree(proc: ChildProcess): void {
+  if (proc.pid === undefined || proc.exitCode !== null || proc.signalCode !== null) return
+
+  if (process.platform === 'win32') {
+    const killer = spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' })
+    killer.on('error', () => { proc.kill() })
+    return
+  }
+  proc.kill('SIGTERM')
+}
+
 // Runs a single yt-dlp download, yielding merged stdout+stderr lines; the async
 // generator's RETURN value is the process exit code (0 = success). Like
 // streamCommand, but surfaces the code so callers can tell success from failure.
-export async function* runTrack(args: string[]): AsyncGenerator<string, number> {
+// Aborting `signal` kills the process tree, which ends the stream naturally with
+// a non-zero code.
+export async function* runTrack(args: string[], signal?: AbortSignal): AsyncGenerator<string, number> {
   const proc = spawn(args[0], args.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] })
   const buffer: string[] = []
   let notify: (() => void) | null = null
@@ -425,14 +492,26 @@ export async function* runTrack(args: string[]): AsyncGenerator<string, number> 
   proc.on('error', (err: Error) => { push(`ERROR: ${err.message}`); exitCode = 1; closed = true; notify?.() })
   proc.on('close', (code) => { exitCode = code ?? 1; closed = true; notify?.() })
 
-  while (!closed || buffer.length > 0) {
-    if (buffer.length > 0) {
-      yield buffer.shift()!
-    } else {
-      await new Promise<void>((r) => { notify = r })
-      notify = null
+  const onAbort = () => killProcessTree(proc)
+  if (signal?.aborted) onAbort()
+  else signal?.addEventListener('abort', onAbort, { once: true })
+
+  try {
+    while (!closed || buffer.length > 0) {
+      if (buffer.length > 0) {
+        yield buffer.shift()!
+      } else {
+        await new Promise<void>((r) => { notify = r })
+        notify = null
+      }
     }
+  } finally {
+    // Covers the abandoned-generator case too: if the caller stops pulling and
+    // the generator is collected, this still stops yt-dlp.
+    signal?.removeEventListener('abort', onAbort)
+    killProcessTree(proc)
   }
+
   return exitCode
 }
 
@@ -440,6 +519,9 @@ export interface DownloadRunResult {
   code: number
   savedPath?: string
   errorMessage?: string
+  // Cover art yt-dlp wrote alongside the media; only still on disk if the run
+  // did not reach the embed step. See removeStrayThumbnail.
+  thumbnailPath?: string
 }
 
 // Translates raw yt-dlp output into UI stream lines: a progress update per
@@ -450,6 +532,7 @@ export async function* translateDownloadLines(
   gen: AsyncGenerator<string, number>,
 ): AsyncGenerator<DownloadProgressLine | DownloadPhaseLine, DownloadRunResult> {
   let savedPath: string | undefined
+  let thumbnailPath: string | undefined
   let lastPhase: DownloadPhase | null = null
   const errors: string[] = []
 
@@ -468,6 +551,9 @@ export async function* translateDownloadLines(
     const dest = parseDestination(line)
     if (dest) savedPath = dest
 
+    const thumb = parseThumbnailPath(line)
+    if (thumb) thumbnailPath = thumb
+
     if (/^ERROR:/i.test(line)) errors.push(line.replace(/^ERROR:\s*/i, '').trim())
     step = await gen.next()
   }
@@ -475,16 +561,19 @@ export async function* translateDownloadLines(
   return {
     code: step.value,
     savedPath,
+    thumbnailPath,
     errorMessage: errors.length !== 0 ? errors.join(' ') : undefined,
   }
 }
 
 // Spawns one yt-dlp download and streams it as UI lines. Shared by the
-// single-video route and the per-track playlist downloader.
+// single-video route and the per-track playlist downloader. Aborting `signal`
+// kills the download.
 export function runDownload(
   args: string[],
+  signal?: AbortSignal,
 ): AsyncGenerator<DownloadProgressLine | DownloadPhaseLine, DownloadRunResult> {
-  return translateDownloadLines(runTrack(args))
+  return translateDownloadLines(runTrack(args, signal))
 }
 
 export interface TrackOutcome {
@@ -494,8 +583,15 @@ export interface TrackOutcome {
 
 // Downloads one track (attempt is 1-based); yields progress/phase lines that are
 // passed straight through to the client, returns the outcome.
+export interface TrackJob {
+  id: string
+  title: string
+  index: number
+  author?: string | null
+}
+
 export type TrackDownloader = (
-  track: { id: string; title: string; index: number },
+  track: TrackJob,
   attempt: number,
 ) => AsyncGenerator<DownloadProgressLine | DownloadPhaseLine, TrackOutcome>
 
@@ -504,6 +600,10 @@ export interface OrchestrateOptions {
   folder: string // absolute destination folder, echoed in the final `done` line
   backoffMs: number
   sleep: (ms: number) => Promise<void>
+  // When aborted the batch stops at the current track: no further retries, no
+  // phase-2 sweep. Without this a cancelled track would look like a failure and
+  // be retried up to 10 more times after the user asked to stop.
+  signal?: AbortSignal
 }
 
 // Two-phase per-track retry engine. Phase 1 tries each track up to attemptsPerPhase,
@@ -511,7 +611,7 @@ export interface OrchestrateOptions {
 // tracks up to attemptsPerPhase; any still failing are marked `track-error`. Pure --
 // the download and sleep are injected, so it is unit-testable without spawning yt-dlp.
 export async function* orchestratePlaylist(
-  tracks: { id: string; title: string; index: number }[],
+  tracks: TrackJob[],
   download: TrackDownloader,
   opts: OrchestrateOptions,
 ): AsyncGenerator<PlaylistDownloadLine> {
@@ -519,7 +619,7 @@ export async function* orchestratePlaylist(
   let downloaded = 0
 
   async function* attemptTrack(
-    track: { id: string; title: string; index: number },
+    track: TrackJob,
     phase: 1 | 2,
   ): AsyncGenerator<PlaylistDownloadLine, TrackOutcome> {
     let outcome: TrackOutcome = { ok: false }
@@ -532,6 +632,9 @@ export async function* orchestratePlaylist(
       }
       outcome = step.value
       if (outcome.ok) return outcome
+      // A cancelled track exits non-zero like a failed one; without this check
+      // the engine would keep retrying work the user just stopped.
+      if (opts.signal?.aborted) return outcome
       if (attempt < opts.attemptsPerPhase) {
         yield { type: 'track-retry', index: track.index, attempt, phase }
         await opts.sleep(opts.backoffMs)
@@ -540,29 +643,38 @@ export async function* orchestratePlaylist(
     return outcome
   }
 
-  const skipped: { id: string; title: string; index: number }[] = []
+  const skipped: TrackJob[] = []
   for (const track of tracks) {
+    if (opts.signal?.aborted) break
     yield { type: 'item', index: track.index, total }
     const outcome = yield* attemptTrack(track, 1)
     if (outcome.ok) {
       downloaded += 1
       yield { type: 'track-done', index: track.index, savedPath: outcome.savedPath ?? '' }
-    } else {
+    } else if (!opts.signal?.aborted) {
       yield { type: 'track-skipped', index: track.index }
       skipped.push(track)
     }
   }
 
   for (const track of skipped) {
+    if (opts.signal?.aborted) break
     yield { type: 'item', index: track.index, total }
     const outcome = yield* attemptTrack(track, 2)
     if (outcome.ok) {
       downloaded += 1
       yield { type: 'track-done', index: track.index, savedPath: outcome.savedPath ?? '' }
-    } else {
+    } else if (!opts.signal?.aborted) {
       yield { type: 'track-error', index: track.index, title: track.title }
     }
   }
 
-  yield { type: 'done', folder: opts.folder, downloaded, total, failed: total - downloaded }
+  yield {
+    type: 'done',
+    folder: opts.folder,
+    downloaded,
+    total,
+    failed: total - downloaded,
+    cancelled: opts.signal?.aborted === true,
+  }
 }

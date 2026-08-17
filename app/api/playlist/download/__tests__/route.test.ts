@@ -9,11 +9,12 @@ jest.mock('@/lib/ytdlp', () => ({
   ffmpegLocationArgs: jest.fn().mockReturnValue([]),
   ytdlpArgs: jest.fn((...args: string[]) => Promise.resolve(['python', '-m', 'yt_dlp', ...args])),
   playlistFormatArgs: jest.fn().mockReturnValue({ formatArgs: ['-x', '--audio-format', 'm4a'], expectedExt: 'm4a' }),
-  parsePlaylistEntries: jest.fn().mockReturnValue({ title: 'Mix', entries: [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }] }),
+  parsePlaylistEntries: jest.fn().mockReturnValue({ title: 'Mix', entries: [{ id: 'a', title: 'A', author: 'Chan' }, { id: 'b', title: 'B', author: 'Chan' }] }),
   sanitizeFolderName: jest.fn((s: string) => s),
   runDownload: jest.fn(),
   progressTemplateArgs: jest.fn().mockReturnValue(['--newline', '--progress-template', 'download:@PROG']),
   orchestratePlaylist: jest.fn(),
+  removeStrayThumbnail: jest.fn(),
 }))
 jest.mock('@/lib/validate', () => ({ isYouTubeUrl: jest.fn().mockReturnValue(true) }))
 
@@ -46,7 +47,7 @@ describe('POST /api/playlist/download', () => {
     jest.clearAllMocks()
     mockEnsureDir.mockReturnValue('C:\\out')
     mockFormatArgs.mockReturnValue({ formatArgs: ['-x', '--audio-format', 'm4a'], expectedExt: 'm4a' })
-    mockParseEntries.mockReturnValue({ title: 'Mix', entries: [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }] })
+    mockParseEntries.mockReturnValue({ title: 'Mix', entries: [{ id: 'a', title: 'A', author: 'Chan' }, { id: 'b', title: 'B', author: 'Chan' }] })
   })
 
   it('flat-dumps the playlist and streams orchestrator lines', async () => {

@@ -32,36 +32,63 @@ const noFfmpeg: StatusResult = {
   ffmpeg: { found: false, version: null },
 }
 
+function expand() {
+  fireEvent.click(screen.getByRole('button', { name: /show dependency details/i }))
+}
+
 describe('StatusBar', () => {
-  it('shows a row per dependency with version when all OK', () => {
+  it('collapses to a Ready summary with every version when all deps are OK', () => {
     render(<StatusBar status={allGood} onRefresh={jest.fn()} />)
+    expect(screen.getByText('Ready')).toBeInTheDocument()
+    expect(screen.getByText(/Python 3\.12\.2 \. yt-dlp 2025\.04\.15 \. ffmpeg 7\.1/)).toBeInTheDocument()
+    // Detail rows stay hidden until asked for.
+    expect(screen.queryByText(/Version 3\.12\.2 detected/)).not.toBeInTheDocument()
+  })
+
+  it('reveals a row per dependency once expanded', () => {
+    render(<StatusBar status={allGood} onRefresh={jest.fn()} />)
+    expand()
     expect(screen.getByText('Python')).toBeInTheDocument()
-    expect(screen.getByText(/Version 3.12.2 detected/)).toBeInTheDocument()
+    expect(screen.getByText(/Version 3\.12\.2 detected/)).toBeInTheDocument()
     expect(screen.getByText('yt-dlp')).toBeInTheDocument()
-    expect(screen.getByText(/2025.04.15/)).toBeInTheDocument()
-  })
-
-  it('shows loading rows when status is null', () => {
-    render(<StatusBar status={null} onRefresh={jest.fn()} />)
-    expect(screen.getAllByText('Checking...')).toHaveLength(3)
-  })
-
-  it('shows ffmpeg version and metadata note when present', () => {
-    render(<StatusBar status={allGood} onRefresh={jest.fn()} />)
+    expect(screen.getByText(/Version 2025\.04\.15 -- up to date/)).toBeInTheDocument()
     expect(screen.getByText('ffmpeg')).toBeInTheDocument()
     expect(screen.getByText(/metadata & thumbnails embedded/i)).toBeInTheDocument()
   })
 
+  it('shows a single loading row when status is null', () => {
+    render(<StatusBar status={null} onRefresh={jest.fn()} />)
+    expect(screen.getByText(/checking dependencies/i)).toBeInTheDocument()
+  })
+
+  it('calls onRefresh when Recheck is clicked', () => {
+    const onRefresh = jest.fn()
+    render(<StatusBar status={allGood} onRefresh={onRefresh} />)
+    fireEvent.click(screen.getByRole('button', { name: /recheck/i }))
+    expect(onRefresh).toHaveBeenCalled()
+  })
+
+  it('stays expanded and hides the collapse toggle when a dep has a problem', () => {
+    render(<StatusBar status={noFfmpeg} onRefresh={jest.fn()} />)
+    expect(screen.getByText('1 problem')).toBeInTheDocument()
+    expect(screen.getByText(/install ffmpeg to embed metadata/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /show dependency details/i })).not.toBeInTheDocument()
+  })
+
+  it('counts multiple problems in the headline', () => {
+    render(<StatusBar status={noPython} onRefresh={jest.fn()} />)
+    expect(screen.getByText('3 problems')).toBeInTheDocument()
+  })
+
   it('shows Install button and manual link when ffmpeg is missing', () => {
     render(<StatusBar status={noFfmpeg} onRefresh={jest.fn()} />)
-    expect(screen.getByText(/install ffmpeg to embed metadata/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /install/i })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /manual/i })).toBeInTheDocument()
   })
 
   it('shows python.org link when Python is missing', () => {
     render(<StatusBar status={noPython} onRefresh={jest.fn()} />)
-    expect(screen.getByText(/install Python 3.8/)).toBeInTheDocument()
+    expect(screen.getByText(/install Python 3\.8/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /python\.org/i })).toBeInTheDocument()
   })
 
@@ -88,7 +115,7 @@ describe('StatusBar', () => {
 
     const onRefresh = jest.fn()
     render(<StatusBar status={noYtdlp} onRefresh={onRefresh} />)
-    fireEvent.click(screen.getByRole('button', { name: /install/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^install$/i }))
     await waitFor(() => expect(onRefresh).toHaveBeenCalled())
   })
 })

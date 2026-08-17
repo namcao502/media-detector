@@ -27,6 +27,16 @@ export function formatSpeed(bytesPerSec: number | undefined): string {
   return `${formatBytes(bytesPerSec)}/s`
 }
 
+// Containing folder of a saved file, keeping the separator style of the input
+// (Windows backslash or POSIX slash) so the path can be handed straight back to
+// the OS file manager. Returns '' when there is no separator to split on.
+export function parentDir(filePath: string): string {
+  const index = Math.max(filePath.lastIndexOf('\\'), filePath.lastIndexOf('/'))
+  if (index < 0) return ''
+  if (index === 0) return filePath.slice(0, 1)
+  return filePath.slice(0, index)
+}
+
 // m:ss, or h:mm:ss past an hour.
 export function formatDuration(seconds: number | undefined): string {
   if (!isUsableNumber(seconds)) return PLACEHOLDER

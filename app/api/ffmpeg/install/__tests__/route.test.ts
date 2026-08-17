@@ -69,24 +69,14 @@ describe('POST /api/ffmpeg/install', () => {
     expect(text).toContain('Homebrew')
   })
 
-  it('guides a Fedora (dnf) install on Linux without running sudo', async () => {
+  it('reports an unsupported platform without spawning anything', async () => {
     setPlatform('linux')
-    mockExec.mockImplementation(async (cmd: string) =>
-      cmd.startsWith('dnf') ? { stdout: '4.18', stderr: '', code: 0 } : { stdout: '', stderr: 'not found', code: 1 })
+    mockExec.mockResolvedValue({ stdout: '', stderr: 'not found', code: 1 })
 
     const text = await (await POST()).text()
-    expect(text).toContain('sudo dnf install ffmpeg')
-    expect(text).toContain('RPM Fusion')
+    expect(text).toContain('not supported on linux')
+    expect(text).toContain('Windows and macOS')
     expect(mockStream).not.toHaveBeenCalled()
-  })
-
-  it('guides an apt install on Debian/Ubuntu Linux', async () => {
-    setPlatform('linux')
-    mockExec.mockImplementation(async (cmd: string) =>
-      cmd.startsWith('apt-get') ? { stdout: '2.4', stderr: '', code: 0 } : { stdout: '', stderr: 'not found', code: 1 })
-
-    const text = await (await POST()).text()
-    expect(text).toContain('sudo apt install ffmpeg')
-    expect(mockStream).not.toHaveBeenCalled()
+    expect(mockExec).not.toHaveBeenCalled()
   })
 })

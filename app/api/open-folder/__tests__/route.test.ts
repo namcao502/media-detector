@@ -14,8 +14,8 @@ describe('openFolderArgs', () => {
   it('uses open on macOS', () => {
     expect(openFolderArgs('/p', 'darwin')).toEqual(['open', '/p'])
   })
-  it('uses xdg-open on Linux (Fedora KDE, GNOME, etc.)', () => {
-    expect(openFolderArgs('/p', 'linux')).toEqual(['xdg-open', '/p'])
+  it('returns null on unsupported platforms', () => {
+    expect(openFolderArgs('/p', 'linux')).toBeNull()
   })
 })
 
@@ -34,8 +34,26 @@ describe('POST /api/open-folder', () => {
 
     const res = await POST(req)
     expect(res.status).toBe(200)
-    // platform-agnostic: matches whatever host the tests run on
-    expect(mockExec).toHaveBeenCalledWith(openFolderArgs(folder))
+    // platform-agnostic: matches whatever supported host the tests run on
+    expect(mockExec).toHaveBeenCalledWith([expect.any(String), folder])
+  })
+
+  it('returns 501 on an unsupported platform', async () => {
+    const orig = process.platform
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    try {
+      const req = new Request('http://localhost/api/open-folder', {
+        method: 'POST',
+        body: JSON.stringify({ path: '/home/x/Music' }),
+        headers: { 'Content-Type': 'application/json' },
+      })
+
+      const res = await POST(req)
+      expect(res.status).toBe(501)
+      expect(mockExec).not.toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(process, 'platform', { value: orig, configurable: true })
+    }
   })
 
   it('returns 400 when path is missing', async () => {

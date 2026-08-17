@@ -9,15 +9,19 @@ jest.mock('@/lib/ytdlp', () => ({
   metadataArgs: jest.requireActual('@/lib/ytdlp').metadataArgs,
   ffmpegLocationArgs: jest.requireActual('@/lib/ytdlp').ffmpegLocationArgs,
   ytdlpArgs: jest.fn((...args: string[]) => Promise.resolve(['python', '-m', 'yt_dlp', ...args])),
+  removeStrayThumbnail: jest.fn(),
 }))
 jest.mock('@/lib/validate', () => ({
   isYouTubeUrl: jest.fn().mockReturnValue(true),
 }))
 
-import { runDownload, ensureOutputDir, checkFfmpeg, translateDownloadLines } from '@/lib/ytdlp'
+import {
+  runDownload, ensureOutputDir, checkFfmpeg, translateDownloadLines, removeStrayThumbnail,
+} from '@/lib/ytdlp'
 import { isYouTubeUrl } from '@/lib/validate'
 
 const mockRun = runDownload as jest.MockedFunction<typeof runDownload>
+const mockRemoveStray = removeStrayThumbnail as jest.MockedFunction<typeof removeStrayThumbnail>
 const mockEnsureDir = ensureOutputDir as jest.MockedFunction<typeof ensureOutputDir>
 const mockIsYouTubeUrl = isYouTubeUrl as jest.MockedFunction<typeof isYouTubeUrl>
 const mockFfmpeg = checkFfmpeg as jest.MockedFunction<typeof checkFfmpeg>
@@ -118,6 +122,56 @@ describe('POST /api/download', () => {
     const args = mockRun.mock.calls[0][0]
     expect(args).toContain('--newline')
     expect(args).toContain('--progress-template')
+  })
+
+  // yt-dlp downloads the cover art to a sibling file and deletes it only after
+  // embedding, so a run that dies in between orphans it.
+  const THUMB_LINE = '[info] Writing video thumbnail 41 to: C:\\out\\Test.webp'
+
+  function downloadReq(body: Record<string, unknown> = {}) {
+    return new Request('http://localhost/api/download', {
+      method: 'POST',
+      body: JSON.stringify({
+        url: 'https://youtube.com/watch?v=x', formatId: '140', title: 'Test', ext: 'm4a', ...body,
+      }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  it('deletes the orphaned cover art when the download fails', async () => {
+    mockRun.mockReturnValue(fakeRun([THUMB_LINE, 'ERROR: HTTP Error 403: Forbidden'], 1))
+    await (await POST(downloadReq())).text()
+    expect(mockRemoveStray).toHaveBeenCalledWith('C:\\out\\Test.webp')
+  })
+
+  it('leaves the cover art alone when the download succeeds', async () => {
+    mockRun.mockReturnValue(fakeRun([THUMB_LINE, '[download] Destination: C:\\out\\Test.m4a'], 0))
+    await (await POST(downloadReq())).text()
+    expect(mockRemoveStray).not.toHaveBeenCalled()
+  })
+
+  it('uses a filename typed in the preview, sanitized', async () => {
+    mockRun.mockReturnValue(fakeRun([], 0))
+    await (await POST(downloadReq({ filename: 'My Own Name' }))).text()
+    const args = mockRun.mock.calls[0][0]
+    expect(args[args.indexOf('-o') + 1]).toContain('My Own Name')
+  })
+
+  it('cannot be made to write outside the download folder', async () => {
+    mockRun.mockReturnValue(fakeRun([], 0))
+    await (await POST(downloadReq({ filename: '../../../escaped' }))).text()
+    const args = mockRun.mock.calls[0][0]
+    const output = args[args.indexOf('-o') + 1]
+    // Only the folder's own separators may remain.
+    expect(output.startsWith('C:\\Users\\test\\Documents\\MediaDetector\\')).toBe(true)
+    expect(output.slice('C:\\Users\\test\\Documents\\MediaDetector\\'.length)).not.toMatch(/[/\\]/)
+  })
+
+  it('falls back to the generated name when the typed one is blank', async () => {
+    mockRun.mockReturnValue(fakeRun([], 0))
+    await (await POST(downloadReq({ filename: '   ', channel: 'Chan' }))).text()
+    const args = mockRun.mock.calls[0][0]
+    expect(args[args.indexOf('-o') + 1]).toContain('Test - Chan')
   })
 
   it('emits an error instead of done when yt-dlp exits non-zero', async () => {

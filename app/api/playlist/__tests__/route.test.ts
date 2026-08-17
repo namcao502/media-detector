@@ -32,7 +32,7 @@ describe('POST /api/playlist', () => {
     const body = await res.json()
     expect(body.title).toBe('My Mix')
     expect(body.count).toBe(2)
-    expect(body.tracks[0]).toEqual({ index: 1, title: 'A' })
+    expect(body.tracks[0]).toEqual({ index: 1, title: 'A', author: null })
   })
 
   it('returns 400 for invalid URL', async () => {

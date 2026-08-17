@@ -46,3 +46,7 @@ next-env.d.ts
 # vendored ffmpeg binaries (see bin/README.md) -- large, opt-in to committing
 /bin/*
 !/bin/README.md
+
+# scratch: filename preview dump (not part of the app)
+/playlist-names.txt
+/playlist-names2.txt

@@ -92,3 +92,23 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* Keyboard focus ring, in the accent colour, for keyboard users only.
+   Components must not set their own `outline` -- this rule carries no
+   !important so an inline `outline: none` would silently beat it. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Composite fields (an input sharing a bordered box with buttons) put the ring
+   on the box. Without this the outline draws around the bare inner input and
+   reads as a blue rectangle floating inside the field. */
+.field-shell:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.field-shell input:focus-visible {
+  outline: none;
+}

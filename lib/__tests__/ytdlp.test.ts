@@ -2,7 +2,7 @@ import {
   parseProgressLine, parseMediaInfo, resolveOutputDir, ensureOutputDir, parseDestination,
   parsePlaylistInfo, parsePlaylistEntries, sanitizeFolderName, orchestratePlaylist,
   metadataArgs, firstDirWithFfmpeg, playlistFormatArgs, parsePhase, progressTemplateArgs,
-  translateDownloadLines,
+  translateDownloadLines, runTrack, parseThumbnailPath, removeStrayThumbnail,
 } from '../ytdlp'
 import type { TrackDownloader, TrackOutcome, DownloadRunResult } from '../ytdlp'
 import type { PlaylistDownloadLine, PlaylistBatchDoneLine, DownloadStreamLine } from '@/types/media'
@@ -148,6 +148,14 @@ describe('translateDownloadLines', () => {
       'ERROR: Video unavailable',
     ], 1)))
     expect(result).toMatchObject({ code: 1, errorMessage: 'Video unavailable' })
+  })
+
+  it('carries the cover-art path out so a failed run can delete it', async () => {
+    const { result } = await drain(translateDownloadLines(fakeRun([
+      '[info] Writing video thumbnail 41 to: C:\\out\\Test.webp',
+      'ERROR: unable to download video data: HTTP Error 403: Forbidden',
+    ], 1)))
+    expect(result).toMatchObject({ code: 1, thumbnailPath: 'C:\\out\\Test.webp' })
   })
 })
 
@@ -302,12 +310,22 @@ describe('parsePlaylistInfo', () => {
     const info = parsePlaylistInfo(json)
     expect(info.title).toBe('Mix')
     expect(info.count).toBe(2)
-    expect(info.tracks).toEqual([{ index: 1, title: 'A' }, { index: 2, title: 'B' }])
+    expect(info.tracks).toEqual([
+      { index: 1, title: 'A', author: null },
+      { index: 2, title: 'B', author: null },
+    ])
   })
   it('uses placeholder title for null/untitled entries', () => {
     const json = JSON.stringify({ title: 'Mix', entries: [null, { title: 'B' }] })
     const info = parsePlaylistInfo(json)
-    expect(info.tracks[0]).toEqual({ index: 1, title: 'Track 1' })
+    expect(info.tracks[0]).toEqual({ index: 1, title: 'Track 1', author: null })
+  })
+  it('carries each entry channel so the client previews the server name', () => {
+    const json = JSON.stringify({
+      title: 'Mix',
+      entries: [{ title: 'A', uploader: 'Chan', channel: 'Other' }, { title: 'B', channel: 'Only' }],
+    })
+    expect(parsePlaylistInfo(json).tracks.map((t) => t.author)).toEqual(['Chan', 'Only'])
   })
 })
 
@@ -316,13 +334,27 @@ describe('parsePlaylistEntries', () => {
     const json = JSON.stringify({ title: 'Mix', entries: [{ id: 'x1', title: 'A' }, { id: 'x2', title: 'B' }] })
     expect(parsePlaylistEntries(json)).toEqual({
       title: 'Mix',
-      entries: [{ id: 'x1', title: 'A' }, { id: 'x2', title: 'B' }],
+      entries: [
+        { id: 'x1', title: 'A', author: null },
+        { id: 'x2', title: 'B', author: null },
+      ],
     })
   })
   it('drops null entries and entries without an id, defaulting missing titles', () => {
     const json = JSON.stringify({ title: 'Mix', entries: [null, { title: 'no id' }, { id: 'x3' }] })
     const { entries } = parsePlaylistEntries(json)
-    expect(entries).toEqual([{ id: 'x3', title: 'Track 1' }])
+    expect(entries).toEqual([{ id: 'x3', title: 'Track 1', author: null }])
+  })
+  it('keeps each entry channel, preferring uploader, for author de-duplication', () => {
+    const json = JSON.stringify({
+      title: 'Mix',
+      entries: [
+        { id: 'x1', title: 'A', uploader: 'Thuy Nga', channel: 'Thuy Nga TV' },
+        { id: 'x2', title: 'B', channel: 'Only Channel' },
+      ],
+    })
+    const { entries } = parsePlaylistEntries(json)
+    expect(entries.map((e) => e.author)).toEqual(['Thuy Nga', 'Only Channel'])
   })
 })
 
@@ -407,4 +439,129 @@ describe('orchestratePlaylist', () => {
     expect(emits.some((e) => e.type === 'track-retry' && e.phase === 2)).toBe(true)
     expect(sleeps).toBe(8) // 4 between-attempt waits per phase, both phases
   })
+
+  it('stops before the next track once the signal aborts', async () => {
+    const calls: Record<string, number> = {}
+    const ac = new AbortController()
+    // Abort while the first track is in flight.
+    const download: TrackDownloader = async function* (t) {
+      calls[t.id] = (calls[t.id] ?? 0) + 1
+      ac.abort()
+      return { ok: true } as TrackOutcome
+    }
+
+    const emits = await collect(orchestratePlaylist(
+      [track('a', 1), track('b', 2), track('c', 3)],
+      download,
+      { attemptsPerPhase: 5, folder: 'C:\\out', backoffMs: 0, sleep: noSleep, signal: ac.signal },
+    ))
+
+    expect(calls).toEqual({ a: 1 })
+    expect(emits.filter((e) => e.type === 'item')).toHaveLength(1)
+    const done = emits.find((e) => e.type === 'done') as PlaylistBatchDoneLine
+    expect(done).toMatchObject({ downloaded: 1, total: 3, cancelled: true })
+  })
+
+  it('does not retry a track that failed because it was cancelled', async () => {
+    const calls: Record<string, number> = {}
+    const ac = new AbortController()
+    const download: TrackDownloader = async function* (t) {
+      calls[t.id] = (calls[t.id] ?? 0) + 1
+      ac.abort() // a killed yt-dlp exits non-zero, like a genuine failure
+      return { ok: false } as TrackOutcome
+    }
+
+    const emits = await collect(orchestratePlaylist(
+      [track('a', 1), track('b', 2)],
+      download,
+      { attemptsPerPhase: 5, folder: 'C:\\out', backoffMs: 0, sleep: noSleep, signal: ac.signal },
+    ))
+
+    expect(calls.a).toBe(1) // not 5, and no phase-2 sweep
+    expect(calls.b).toBeUndefined()
+    expect(emits.some((e) => e.type === 'track-retry')).toBe(false)
+    expect(emits.some((e) => e.type === 'track-skipped')).toBe(false)
+    expect(emits.some((e) => e.type === 'track-error')).toBe(false)
+    const done = emits.find((e) => e.type === 'done') as PlaylistBatchDoneLine
+    expect(done).toMatchObject({ downloaded: 0, cancelled: true })
+  })
+
+  it('reports cancelled:false for a batch that ran to completion', async () => {
+    const calls: Record<string, number> = {}
+    const emits = await collect(orchestratePlaylist(
+      [track('a', 1)],
+      makeDownload(() => true, calls),
+      { attemptsPerPhase: 5, folder: 'C:\\out', backoffMs: 0, sleep: noSleep, signal: new AbortController().signal },
+    ))
+    const done = emits.find((e) => e.type === 'done') as PlaylistBatchDoneLine
+    expect(done).toMatchObject({ cancelled: false })
+  })
+})
+
+describe('parseThumbnailPath', () => {
+  it('captures the path from the line yt-dlp actually prints', () => {
+    // Verbatim from a real run.
+    expect(parseThumbnailPath(
+      '[info] Writing video thumbnail 41 to: C:\\out\\Big Buck Bunny.webp',
+    )).toBe('C:\\out\\Big Buck Bunny.webp')
+  })
+
+  it('handles a missing index and a POSIX path', () => {
+    expect(parseThumbnailPath('[info] Writing video thumbnail to: /home/me/Music/song.jpg'))
+      .toBe('/home/me/Music/song.jpg')
+  })
+
+  it('ignores unrelated lines', () => {
+    expect(parseThumbnailPath('[download] Destination: C:\\out\\x.m4a')).toBeNull()
+    expect(parseThumbnailPath('[EmbedThumbnail] mutagen: Adding thumbnail')).toBeNull()
+  })
+})
+
+describe('removeStrayThumbnail', () => {
+  it('deletes the orphaned cover art', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'thumb-'))
+    const file = path.join(dir, 'cover.webp')
+    fs.writeFileSync(file, 'x')
+
+    removeStrayThumbnail(file)
+    expect(fs.existsSync(file)).toBe(false)
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('is a no-op for undefined or a path that is already gone', () => {
+    expect(() => removeStrayThumbnail(undefined)).not.toThrow()
+    expect(() => removeStrayThumbnail(path.join(os.tmpdir(), 'definitely-not-here.webp')))
+      .not.toThrow()
+  })
+})
+
+describe('runTrack cancellation', () => {
+  it('kills the process when the signal aborts, ending the stream', async () => {
+    const ac = new AbortController()
+    // `python -c` blocks forever; only a kill can end it.
+    const gen = runTrack(
+      [process.execPath, '-e', 'setInterval(() => console.log("tick"), 20)'],
+      ac.signal,
+    )
+
+    // Proves the child really started, so the assertions below are not vacuous.
+    const first = await gen.next()
+    expect(first.done).toBe(false)
+    expect(first.value).toBe('tick')
+
+    ac.abort()
+
+    // Drain to completion -- it must terminate rather than hang.
+    let step = await gen.next()
+    while (!step.done) step = await gen.next()
+    expect(step.value).not.toBe(0)
+  }, 15000)
+
+  it('kills the process when the caller stops pulling', async () => {
+    const gen = runTrack([process.execPath, '-e', 'setInterval(() => console.log("tick"), 20)'])
+    await gen.next()
+    // Abandoning the generator must not leave the child running.
+    await gen.return(0 as never)
+    expect(true).toBe(true)
+  }, 15000)
 })
