@@ -384,22 +384,33 @@ export function playlistFormatArgs(
     return { formatArgs: ['-f', selector, '--merge-output-format', 'mp4'], expectedExt: 'mp4' }
   }
 
+  // Always pick the source that needs the least conversion. YouTube's plain
+  // `bestaudio` is opus-in-webm, so asking for m4a without a selector made
+  // ffmpeg transcode every track: measured at 27s vs 0.4s for a 37-minute file,
+  // with no output while it ran, which looked exactly like a hang.
+  // The stereo clause matters too: plain `bestaudio[ext=m4a]` picks the 5.1
+  // surround AAC track where one exists (format 258, 388kbps vs 140's 129kbps),
+  // which is 3x the bytes for something headed to a phone.
+  const M4A_SOURCE =
+    'bestaudio[ext=m4a][audio_channels<=2]/bestaudio[ext=m4a]/bestaudio/best'
+
   const fmt = sel.audioFormat ?? 'm4a'
   if (fmt === 'mp3') {
-    // Re-encode to mp3 (requires ffmpeg); the UI disables this when ffmpeg is absent.
-    return { formatArgs: ['-x', '--audio-format', 'mp3'], expectedExt: 'mp3' }
+    // mp3 is a re-encode whatever the source; starting from AAC is no slower
+    // than from opus and avoids a needless second generation loss.
+    return { formatArgs: ['-f', M4A_SOURCE, '-x', '--audio-format', 'mp3'], expectedExt: 'mp3' }
   }
   if (fmt === 'best') {
     // Native audio, no conversion. Typically opus-in-webm -> report webm so no
     // thumbnail is requested (webm cannot embed one).
     return { formatArgs: ['-f', 'bestaudio/best'], expectedExt: 'webm' }
   }
-  // m4a: with ffmpeg, extract to m4a so every track is a consistent .m4a (remux,
-  // lossless when the source is already AAC). Without ffmpeg, best-effort selection.
+  // m4a: prefer an AAC source so --audio-format m4a is a lossless remux rather
+  // than a transcode. Without ffmpeg there is no postprocessing at all.
   if (hasFfmpeg) {
-    return { formatArgs: ['-x', '--audio-format', 'm4a'], expectedExt: 'm4a' }
+    return { formatArgs: ['-f', M4A_SOURCE, '-x', '--audio-format', 'm4a'], expectedExt: 'm4a' }
   }
-  return { formatArgs: ['-f', 'bestaudio[ext=m4a]/bestaudio/best'], expectedExt: 'm4a' }
+  return { formatArgs: ['-f', M4A_SOURCE], expectedExt: 'm4a' }
 }
 
 export function parsePlaylistInfo(jsonStr: string): PlaylistInfo {
@@ -474,27 +485,69 @@ export function killProcessTree(proc: ChildProcess): void {
   proc.kill('SIGTERM')
 }
 
+// How long a run may produce no output at all before it is treated as hung.
+// ffmpeg postprocessing is silent by design -- yt-dlp swallows its output -- so
+// a deadline is the only way to tell "still working" from "stuck". Generous
+// enough for a slow postprocess on a long track, but bounded: without it one
+// wedged track stalls a whole playlist indefinitely.
+export const IDLE_TIMEOUT_MS = 5 * 60_000
+
+// Marks the error line a timeout produces. A hang is not a flaky network, so
+// callers use this to stop retrying instead of burning the deadline again.
+export const HUNG_MARKER = 'treating the download as hung'
+
 // Runs a single yt-dlp download, yielding merged stdout+stderr lines; the async
 // generator's RETURN value is the process exit code (0 = success). Like
 // streamCommand, but surfaces the code so callers can tell success from failure.
 // Aborting `signal` kills the process tree, which ends the stream naturally with
-// a non-zero code.
-export async function* runTrack(args: string[], signal?: AbortSignal): AsyncGenerator<string, number> {
+// a non-zero code; so does going quiet for longer than `idleTimeoutMs` (pass 0
+// to disable).
+export async function* runTrack(
+  args: string[],
+  signal?: AbortSignal,
+  idleTimeoutMs: number = IDLE_TIMEOUT_MS,
+): AsyncGenerator<string, number> {
   const proc = spawn(args[0], args.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] })
   const buffer: string[] = []
   let notify: (() => void) | null = null
   let closed = false
   let exitCode = 1
 
+  let idleTimer: ReturnType<typeof setTimeout> | null = null
+  let timedOut = false
+
+  const clearIdleTimer = () => {
+    if (idleTimer !== null) clearTimeout(idleTimer)
+    idleTimer = null
+  }
+
   const push = (line: string) => { buffer.push(line); notify?.() }
-  proc.stdout.on('data', (c: Buffer) => c.toString('utf8').split('\n').filter(Boolean).forEach(push))
-  proc.stderr.on('data', (c: Buffer) => c.toString('utf8').split('\n').filter(Boolean).forEach(push))
-  proc.on('error', (err: Error) => { push(`ERROR: ${err.message}`); exitCode = 1; closed = true; notify?.() })
-  proc.on('close', (code) => { exitCode = code ?? 1; closed = true; notify?.() })
+
+  // Re-armed on every line, so the deadline is on silence, not total runtime.
+  const armIdleTimer = () => {
+    if (idleTimeoutMs <= 0 || timedOut) return
+    clearIdleTimer()
+    idleTimer = setTimeout(() => {
+      timedOut = true
+      push(`ERROR: no output for ${Math.round(idleTimeoutMs / 1000)}s -- ${HUNG_MARKER}`)
+      killProcessTree(proc)
+    }, idleTimeoutMs)
+  }
+
+  const onData = (chunk: Buffer) => {
+    armIdleTimer()
+    chunk.toString('utf8').split('\n').filter(Boolean).forEach(push)
+  }
+
+  proc.stdout.on('data', onData)
+  proc.stderr.on('data', onData)
+  proc.on('error', (err: Error) => { push(`ERROR: ${err.message}`); exitCode = 1; closed = true; clearIdleTimer(); notify?.() })
+  proc.on('close', (code) => { exitCode = code ?? 1; closed = true; clearIdleTimer(); notify?.() })
 
   const onAbort = () => killProcessTree(proc)
   if (signal?.aborted) onAbort()
   else signal?.addEventListener('abort', onAbort, { once: true })
+  armIdleTimer()
 
   try {
     while (!closed || buffer.length > 0) {
@@ -508,6 +561,7 @@ export async function* runTrack(args: string[], signal?: AbortSignal): AsyncGene
   } finally {
     // Covers the abandoned-generator case too: if the caller stops pulling and
     // the generator is collected, this still stops yt-dlp.
+    clearIdleTimer()
     signal?.removeEventListener('abort', onAbort)
     killProcessTree(proc)
   }
@@ -579,6 +633,9 @@ export function runDownload(
 export interface TrackOutcome {
   ok: boolean
   savedPath?: string
+  // The attempt was killed by the idle deadline rather than failing outright.
+  // Retrying would just burn the deadline again, so the engine gives up early.
+  hung?: boolean
 }
 
 // Downloads one track (attempt is 1-based); yields progress/phase lines that are
@@ -635,6 +692,8 @@ export async function* orchestratePlaylist(
       // A cancelled track exits non-zero like a failed one; without this check
       // the engine would keep retrying work the user just stopped.
       if (opts.signal?.aborted) return outcome
+      // Likewise a hang: 5 more attempts would cost 5 more deadlines.
+      if (outcome.hung) return outcome
       if (attempt < opts.attemptsPerPhase) {
         yield { type: 'track-retry', index: track.index, attempt, phase }
         await opts.sleep(opts.backoffMs)

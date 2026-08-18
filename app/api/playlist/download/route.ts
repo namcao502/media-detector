@@ -3,7 +3,7 @@ import path from 'path'
 import {
   execArgs, ensureOutputDir, checkFfmpeg, metadataArgs, ffmpegLocationArgs, ytdlpArgs,
   playlistFormatArgs, parsePlaylistEntries, sanitizeFolderName, orchestratePlaylist,
-  runDownload, progressTemplateArgs, removeStrayThumbnail,
+  runDownload, progressTemplateArgs, removeStrayThumbnail, HUNG_MARKER,
 } from '@/lib/ytdlp'
 import type { TrackDownloader } from '@/lib/ytdlp'
 import { isYouTubeUrl } from '@/lib/validate'
@@ -111,7 +111,11 @@ export async function POST(req: Request): Promise<Response> {
           // A failed or cancelled attempt leaves the cover art it never got to
           // embed next to the media; each retry would add another one.
           if (step.value.code !== 0) removeStrayThumbnail(step.value.thumbnailPath)
-          return { ok: step.value.code === 0, savedPath: step.value.savedPath }
+          return {
+            ok: step.value.code === 0,
+            savedPath: step.value.savedPath,
+            hung: step.value.errorMessage?.includes(HUNG_MARKER) === true,
+          }
         }
 
         const tracks = entries.map((e, i) => ({ ...e, index: i + 1 }))

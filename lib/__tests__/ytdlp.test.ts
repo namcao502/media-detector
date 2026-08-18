@@ -238,17 +238,27 @@ describe('ensureOutputDir', () => {
 describe('playlistFormatArgs', () => {
   it('m4a with ffmpeg extracts to a consistent m4a container', () => {
     const { formatArgs, expectedExt } = playlistFormatArgs({ mode: 'audio', audioFormat: 'm4a' }, true)
-    expect(formatArgs).toEqual(['-x', '--audio-format', 'm4a'])
+    expect(formatArgs).toEqual(['-f', 'bestaudio[ext=m4a][audio_channels<=2]/bestaudio[ext=m4a]/bestaudio/best', '-x', '--audio-format', 'm4a'])
     expect(expectedExt).toBe('m4a')
+  })
+  it('always names an AAC-first source so m4a is a remux, not a transcode', () => {
+    // Regression: without a selector yt-dlp picks opus-in-webm and --audio-format
+    // m4a transcodes the whole track (27s vs 0.4s for 37 minutes of audio),
+    // silently, which showed up as a hung download.
+    for (const audioFormat of ['m4a', 'mp3'] as const) {
+      const { formatArgs } = playlistFormatArgs({ mode: 'audio', audioFormat }, true)
+      expect(formatArgs[0]).toBe('-f')
+      expect(formatArgs[1]).toContain('bestaudio[ext=m4a]')
+    }
   })
   it('m4a without ffmpeg falls back to format selection', () => {
     const { formatArgs, expectedExt } = playlistFormatArgs({ mode: 'audio', audioFormat: 'm4a' }, false)
-    expect(formatArgs).toEqual(['-f', 'bestaudio[ext=m4a]/bestaudio/best'])
+    expect(formatArgs).toEqual(['-f', 'bestaudio[ext=m4a][audio_channels<=2]/bestaudio[ext=m4a]/bestaudio/best'])
     expect(expectedExt).toBe('m4a')
   })
   it('mp3 re-encodes to mp3', () => {
     const { formatArgs, expectedExt } = playlistFormatArgs({ mode: 'audio', audioFormat: 'mp3' }, true)
-    expect(formatArgs).toEqual(['-x', '--audio-format', 'mp3'])
+    expect(formatArgs).toEqual(['-f', 'bestaudio[ext=m4a][audio_channels<=2]/bestaudio[ext=m4a]/bestaudio/best', '-x', '--audio-format', 'mp3'])
     expect(expectedExt).toBe('mp3')
   })
   it('best audio keeps native container and reports webm (no thumbnail)', () => {
@@ -486,6 +496,25 @@ describe('orchestratePlaylist', () => {
     expect(done).toMatchObject({ downloaded: 0, cancelled: true })
   })
 
+  it('gives up on a hung track instead of burning the deadline again', async () => {
+    const calls: Record<string, number> = {}
+    const download: TrackDownloader = async function* (t) {
+      calls[t.id] = (calls[t.id] ?? 0) + 1
+      return { ok: false, hung: true } as TrackOutcome
+    }
+
+    const emits = await collect(orchestratePlaylist(
+      [track('a', 1), track('b', 2)],
+      download,
+      { attemptsPerPhase: 5, folder: 'C:\\out', backoffMs: 0, sleep: noSleep },
+    ))
+
+    // One attempt per phase, not five, and the batch still moves on.
+    expect(calls).toEqual({ a: 2, b: 2 })
+    expect(emits.some((e) => e.type === 'track-retry')).toBe(false)
+    expect(emits.filter((e) => e.type === 'track-error')).toHaveLength(2)
+  })
+
   it('reports cancelled:false for a batch that ran to completion', async () => {
     const calls: Record<string, number> = {}
     const emits = await collect(orchestratePlaylist(
@@ -555,6 +584,40 @@ describe('runTrack cancellation', () => {
     let step = await gen.next()
     while (!step.done) step = await gen.next()
     expect(step.value).not.toBe(0)
+  }, 15000)
+
+  it('kills a process that goes silent past the idle deadline', async () => {
+    // Prints once, then sleeps forever: exactly the shape of a wedged ffmpeg
+    // postprocess, which yt-dlp reports nothing for.
+    const gen = runTrack(
+      [process.execPath, '-e', 'console.log("started"); setTimeout(() => {}, 1e9)'],
+      undefined,
+      600,
+    )
+
+    const lines: string[] = []
+    let step = await gen.next()
+    while (!step.done) { lines.push(step.value); step = await gen.next() }
+
+    expect(lines[0]).toBe('started')
+    expect(lines.some((l) => /no output for .* hung/i.test(l))).toBe(true)
+    expect(step.value).not.toBe(0)
+  }, 15000)
+
+  it('does not fire the deadline while output keeps coming', async () => {
+    const gen = runTrack(
+      [process.execPath, '-e', 'let n=0; const t=setInterval(()=>{console.log("tick"+ ++n); if(n===6){clearInterval(t)}},50)'],
+      undefined,
+      600,
+    )
+
+    const lines: string[] = []
+    let step = await gen.next()
+    while (!step.done) { lines.push(step.value); step = await gen.next() }
+
+    expect(lines.filter((l) => l.startsWith('tick')).length).toBe(6)
+    expect(lines.some((l) => /hung/i.test(l))).toBe(false)
+    expect(step.value).toBe(0)
   }, 15000)
 
   it('kills the process when the caller stops pulling', async () => {
