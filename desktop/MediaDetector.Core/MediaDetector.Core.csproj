@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- net10.0-windows, not plain net10.0: it is UseWPF that pulls in the UI
+         framework, not the -windows TFM, so this stays UI-free while being
+         allowed to call [SupportedOSPlatform("windows")] APIs. Plain net10.0
+         plus TreatWarningsAsErrors makes every such call a hard CA1416. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,49 @@
+<!-- Light mode  -  Apple system colors (grouped background + elevated white cards).
+     Ported 1:1 from app/globals.css :root. Both dictionaries declare the SAME
+     keys; one present in only one file is a crash on theme switch. -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <SolidColorBrush x:Key="BgPage"     Color="#f2f2f7"/>
+    <SolidColorBrush x:Key="BgCard"     Color="#ffffff"/>
+    <SolidColorBrush x:Key="BgInput"    Color="#ffffff"/>
+    <SolidColorBrush x:Key="BgFill"     Color="#e9e9eb"/>
+    <SolidColorBrush x:Key="BgElevated" Color="#ffffff"/>
+    <SolidColorBrush x:Key="Border"     Color="#d9d9de"/>
+
+    <SolidColorBrush x:Key="TextPrimary"   Color="#1c1c1e"/>
+    <SolidColorBrush x:Key="TextSecondary" Color="#6c6c70"/>
+    <SolidColorBrush x:Key="TextMuted"     Color="#8e8e93"/>
+
+    <SolidColorBrush x:Key="Accent"      Color="#007aff"/>
+    <SolidColorBrush x:Key="AccentHover" Color="#0069d9"/>
+
+    <SolidColorBrush x:Key="BgBadge"   Color="#e5f0ff"/>
+    <SolidColorBrush x:Key="TextBadge" Color="#007aff"/>
+
+    <SolidColorBrush x:Key="StatusOk"    Color="#34c759"/>
+    <SolidColorBrush x:Key="StatusError" Color="#ff3b30"/>
+    <SolidColorBrush x:Key="StatusWarn"  Color="#ff9500"/>
+
+    <SolidColorBrush x:Key="BgStatusError"        Color="#fff0ef"/>
+    <SolidColorBrush x:Key="BorderStatusError"    Color="#ffd3d0"/>
+    <SolidColorBrush x:Key="TextStatusErrorTitle" Color="#b3261e"/>
+    <SolidColorBrush x:Key="TextStatusError"      Color="#d70015"/>
+
+    <SolidColorBrush x:Key="BgStatusWarn"        Color="#fff8ef"/>
+    <SolidColorBrush x:Key="BorderStatusWarn"    Color="#ffe1b3"/>
+    <SolidColorBrush x:Key="TextStatusWarnTitle" Color="#8a5300"/>
+    <SolidColorBrush x:Key="TextStatusWarn"      Color="#b25e00"/>
+
+    <SolidColorBrush x:Key="LogBg"   Color="#0a000000"/>
+    <SolidColorBrush x:Key="LogText" Color="#248a3d"/>
+
+    <CornerRadius x:Key="RadiusLg">16</CornerRadius>
+    <CornerRadius x:Key="RadiusMd">12</CornerRadius>
+    <CornerRadius x:Key="RadiusSm">8</CornerRadius>
+    <!-- Capsule buttons; the React version used Tailwind's rounded-full. -->
+    <CornerRadius x:Key="RadiusPill">999</CornerRadius>
+
+    <DropShadowEffect x:Key="ShadowPill" BlurRadius="3"  ShadowDepth="1" Opacity="0.12" Color="#000000"/>
+    <DropShadowEffect x:Key="ShadowPop"  BlurRadius="30" ShadowDepth="8" Opacity="0.12" Color="#000000"/>
+</ResourceDictionary>

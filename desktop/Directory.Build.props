@@ -1,0 +1,25 @@
+<Project>
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- NU19xx: a new CVE disclosure in a transitive package must not fail an
+         unrelated build. MVVMTK0042: the toolkit suggests converting
+         [ObservableProperty] fields to partial properties; we use the field form
+         deliberately because only it allows initializers (CS8050 otherwise). -->
+    <WarningsNotAsErrors>NU1901;NU1902;NU1903;NU1904;MVVMTK0042</WarningsNotAsErrors>
+    <!-- REQUIRED by [LibraryImport] in JobObject. Without it the source generator
+         emits SYSLIB1062 plus five CS0227 and Core does not build. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- InvariantGlobalization must stay OFF. With it on, every WPF data binding
+         throws at runtime: BindingExpression.GetCulture() calls
+         XmlLanguage.GetSpecificCulture(), which needs culture data the flag
+         strips ("Cannot find non-neutral culture related to 'en-us'"). It is a
+         crash on first paint, not a build error.
+         Locale-independent formatting is guaranteed the right way instead: every
+         parse and format in Core passes CultureInfo.InvariantCulture explicitly
+         (see DisplayFormat and OutputParser). -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+</Project>

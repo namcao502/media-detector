@@ -1,0 +1,48 @@
+<!-- Dark mode  -  true-black system background, elevated neutral gray cards.
+     Ported 1:1 from app/globals.css :root[data-theme="dark"]. Same key set as
+     Light.xaml, deliberately. -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <SolidColorBrush x:Key="BgPage"     Color="#000000"/>
+    <SolidColorBrush x:Key="BgCard"     Color="#1c1c1e"/>
+    <SolidColorBrush x:Key="BgInput"    Color="#2c2c2e"/>
+    <SolidColorBrush x:Key="BgFill"     Color="#2c2c2e"/>
+    <SolidColorBrush x:Key="BgElevated" Color="#48484a"/>
+    <SolidColorBrush x:Key="Border"     Color="#38383a"/>
+
+    <SolidColorBrush x:Key="TextPrimary"   Color="#ffffff"/>
+    <SolidColorBrush x:Key="TextSecondary" Color="#98989f"/>
+    <SolidColorBrush x:Key="TextMuted"     Color="#8e8e93"/>
+
+    <SolidColorBrush x:Key="Accent"      Color="#007aff"/>
+    <SolidColorBrush x:Key="AccentHover" Color="#0a84ff"/>
+
+    <SolidColorBrush x:Key="BgBadge"   Color="#0a2540"/>
+    <SolidColorBrush x:Key="TextBadge" Color="#64b5ff"/>
+
+    <SolidColorBrush x:Key="StatusOk"    Color="#30d158"/>
+    <SolidColorBrush x:Key="StatusError" Color="#ff453a"/>
+    <SolidColorBrush x:Key="StatusWarn"  Color="#ff9f0a"/>
+
+    <SolidColorBrush x:Key="BgStatusError"        Color="#2a1513"/>
+    <SolidColorBrush x:Key="BorderStatusError"    Color="#5c1d18"/>
+    <SolidColorBrush x:Key="TextStatusErrorTitle" Color="#ffb3ae"/>
+    <SolidColorBrush x:Key="TextStatusError"      Color="#ff453a"/>
+
+    <SolidColorBrush x:Key="BgStatusWarn"        Color="#2a1e0a"/>
+    <SolidColorBrush x:Key="BorderStatusWarn"    Color="#5c3d0f"/>
+    <SolidColorBrush x:Key="TextStatusWarnTitle" Color="#ffcf80"/>
+    <SolidColorBrush x:Key="TextStatusWarn"      Color="#ff9f0a"/>
+
+    <SolidColorBrush x:Key="LogBg"   Color="#0dffffff"/>
+    <SolidColorBrush x:Key="LogText" Color="#30d158"/>
+
+    <CornerRadius x:Key="RadiusLg">16</CornerRadius>
+    <CornerRadius x:Key="RadiusMd">12</CornerRadius>
+    <CornerRadius x:Key="RadiusSm">8</CornerRadius>
+    <CornerRadius x:Key="RadiusPill">999</CornerRadius>
+
+    <DropShadowEffect x:Key="ShadowPill" BlurRadius="3"  ShadowDepth="1" Opacity="0.40" Color="#000000"/>
+    <DropShadowEffect x:Key="ShadowPop"  BlurRadius="30" ShadowDepth="8" Opacity="0.50" Color="#000000"/>
+</ResourceDictionary>
