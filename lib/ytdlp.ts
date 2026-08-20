@@ -64,11 +64,35 @@ export async function pipArgs(...args: string[]): Promise<string[]> {
   return [await resolvePython(), '-m', 'pip', ...args]
 }
 
+// Args every YouTube call needs to get a format URL that is not HTTP 403.
+//
+// 1. JS challenges. YouTube's player gates its format URLs behind signature and
+//    "n" challenges that yt-dlp can only answer with an external JavaScript
+//    runtime plus the EJS solver script. Miss either and the download dies with
+//    "unable to download video data: HTTP Error 403: Forbidden" -- after the
+//    cover art has already been written, which is why a failed run used to leave
+//    a lone .webp behind. We are already running on Node, so hand yt-dlp this
+//    process's own binary rather than hoping deno is installed. The solver
+//    script is fetched once from the yt-dlp org's release and cached under
+//    yt-dlp's cache dir; without --remote-components it is skipped and the
+//    challenges fail even with a runtime present.
+// 2. Player client. yt-dlp's default client (android_vr) needs no PO token, but
+//    its URLs currently 403 on every video (yt-dlp#17456). web_embedded needs no
+//    token either and serves the same audio-only + DASH formats, so ask for it
+//    first and keep the defaults behind it for videos that disable embedding.
+export function youtubeAccessArgs(): string[] {
+  return [
+    '--js-runtimes', `node:${process.execPath}`,
+    '--remote-components', 'ejs:github',
+    '--extractor-args', 'youtube:player_client=web_embedded,default',
+  ]
+}
+
 // yt-dlp installs a `yt-dlp` shim into Python's Scripts dir, which a fresh
 // python.org install does not add to PATH. Run it as a module so it works
 // wherever `python` does.
 export async function ytdlpArgs(...args: string[]): Promise<string[]> {
-  return [await resolvePython(), '-m', 'yt_dlp', ...args]
+  return [await resolvePython(), '-m', 'yt_dlp', ...youtubeAccessArgs(), ...args]
 }
 
 // Merges stdout and stderr into a single stream to avoid pipe buffer deadlocks.

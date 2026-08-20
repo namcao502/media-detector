@@ -41,6 +41,16 @@ npx tsc --noEmit                     # typecheck (no emit)
 - `execCommand(cmd)` -- fixed internal commands only (e.g. `yt-dlp --version`). **Never** pass user input here.
 - `streamCommand(args)` -- async generator; merges stdout+stderr to avoid the 64KB pipe deadlock.
 
+### YouTube access args (`youtubeAccessArgs` in `lib/ytdlp.ts`)
+
+`ytdlpArgs()` prepends these to **every** yt-dlp call. Without them YouTube answers each format URL with `unable to download video data: HTTP Error 403: Forbidden`, and because `--embed-thumbnail` writes the cover art *before* the media, the only thing a failed run leaves on disk is a stray `.webp` -- which is exactly what that failure looks like from the UI.
+
+- `--js-runtimes node:<process.execPath>` -- YouTube gates format URLs behind the player's signature and `n` challenges, which yt-dlp can only solve with an external JavaScript runtime. It enables only `deno` by default, so hand it the Node binary already running this app; that keeps the JS runtime off the runtime-dependency list entirely.
+- `--remote-components ejs:github` -- a runtime alone is not enough. The EJS solver script is a separate download (yt-dlp org release, cached under yt-dlp's cache dir). Without this flag yt-dlp warns "challenge solver script was skipped", the challenges fail, and the URLs 403 anyway. Verified both ways against a cleared `--cache-dir`.
+- `--extractor-args youtube:player_client=web_embedded,default` -- yt-dlp's default client (`android_vr`) needs no PO token, but its URLs currently 403 on every video (yt-dlp#17456). `web_embedded` needs no token either and serves the same audio-only + DASH formats, so it goes first; `default` stays behind it for videos that disable embedding. The clients that need a GVS PO token (`mweb`, `ios`, `tv_simply`, `web`) are not an option -- yt-dlp skips their formats outright -- and `web_safari` only offers muxed HLS, so extracting audio from it would mean downloading video too.
+
+Verified after the change: 140 (m4a), 251 (opus) and a 1080p video merge all download; before it, all three 403'd.
+
 ### Streaming responses
 
 Download and install routes return a `ReadableStream` of NDJSON lines; the client reads `res.body.getReader()` and decodes with `new TextDecoder()` (`{ stream: true }` for multi-byte chars across chunks). Download line types (`DownloadStreamLine`): `progress`, `phase`, `done` (`savedPath`), `error` (`message`). Playlist line types add `item`, `track-done`, `track-retry`, `track-skipped`, `track-error`, `done`.

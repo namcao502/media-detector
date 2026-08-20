@@ -3,6 +3,7 @@ import {
   parsePlaylistInfo, parsePlaylistEntries, sanitizeFolderName, orchestratePlaylist,
   metadataArgs, firstDirWithFfmpeg, playlistFormatArgs, parsePhase, progressTemplateArgs,
   translateDownloadLines, runTrack, parseThumbnailPath, removeStrayThumbnail,
+  youtubeAccessArgs, ytdlpArgs,
 } from '../ytdlp'
 import type { TrackDownloader, TrackOutcome, DownloadRunResult } from '../ytdlp'
 import type { PlaylistDownloadLine, PlaylistBatchDoneLine, DownloadStreamLine } from '@/types/media'
@@ -19,6 +20,34 @@ describe('progressTemplateArgs', () => {
     expect(template).toContain('%(progress.downloaded_bytes)s')
     expect(template).toContain('%(progress.speed)s')
     expect(template).toContain('%(progress.eta)s')
+  })
+})
+
+describe('youtubeAccessArgs', () => {
+  it('points yt-dlp at this process\'s node binary for JS challenges', () => {
+    const args = youtubeAccessArgs()
+    expect(args[args.indexOf('--js-runtimes') + 1]).toBe(`node:${process.execPath}`)
+  })
+
+  it('enables the EJS solver download, without which the challenges fail', () => {
+    const args = youtubeAccessArgs()
+    expect(args[args.indexOf('--remote-components') + 1]).toBe('ejs:github')
+  })
+
+  it('prefers web_embedded, whose URLs do not 403, over the default client', () => {
+    const args = youtubeAccessArgs()
+    const extractor = args[args.indexOf('--extractor-args') + 1]
+    expect(extractor).toBe('youtube:player_client=web_embedded,default')
+  })
+})
+
+describe('ytdlpArgs', () => {
+  it('runs yt-dlp as a module and applies the access args before the call args', async () => {
+    const args = await ytdlpArgs('--dump-json', 'https://youtu.be/abc')
+    expect(args.slice(1, 3)).toEqual(['-m', 'yt_dlp'])
+    const accessArgs = youtubeAccessArgs()
+    expect(args.slice(3, 3 + accessArgs.length)).toEqual(accessArgs)
+    expect(args.slice(3 + accessArgs.length)).toEqual(['--dump-json', 'https://youtu.be/abc'])
   })
 })
 
