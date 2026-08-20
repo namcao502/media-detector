@@ -1,168 +1,77 @@
 # Media Detector
 
-A Next.js web app for detecting and downloading video and audio from YouTube and YouTube Music.
+A native Windows desktop app for detecting and downloading video and audio from
+YouTube and YouTube Music.
 
-Paste a URL, pick a format, and download -- the app handles dependency checking, format detection, and streaming progress.
+Paste a URL, pick a format, download. It checks its own runtime dependencies,
+detects the available formats, and streams progress per track.
+
+- Single videos: pick any video or audio format, with the best one badged.
+- Playlists: pick one format for the batch, download several tracks at once,
+  with per-track retry and rename.
+- Files are named `<title> - <artist>.<ext>`, with an editable preview.
+- Metadata and cover art are embedded when ffmpeg is available.
+
+Windows only. Built with WPF on .NET 10.
 
 ---
 
 ## Requirements
 
-- Node.js 18+
-- Python 3.8+ (must be on PATH as `python` or `python3`)
-- yt-dlp (installed automatically via the app if Python is present)
+| Tool | Required | Notes |
+|------|----------|-------|
+| .NET 10 SDK | to build | not needed to run a published build |
+| Python 3.8+ | yes | must be on PATH as `python` or `python3` |
+| yt-dlp | yes | installed from the app |
+| Node.js | yes | installed from the app; yt-dlp needs a JS runtime or YouTube returns HTTP 403 |
+| ffmpeg | optional | needed to merge video+audio, convert to MP3, and embed metadata/cover art |
+
+Only Python has to be installed by hand. The app's dependency panel has an
+**Install** button for each of the others and rechecks itself afterwards.
 
 ---
 
-## Getting Started
+## Running it
 
 ```bash
-npm install
-npm run dev
+cd desktop
+dotnet run --project MediaDetector.App
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Or build a release you can launch from Explorer:
 
-On first load the status bar checks for Python and yt-dlp. If yt-dlp is missing, click **Install** in the status bar to install it via pip. If yt-dlp is outdated it will be updated automatically on startup.
-
----
-
-## How It Works
-
-1. The status bar checks Python and yt-dlp on page load and caches the result.
-2. Paste a YouTube or YouTube Music URL and click **Detect**.
-3. The app calls `yt-dlp --dump-json` to fetch metadata and available formats.
-4. Select the **Video** or **Audio** tab, choose a format, and click **Download**.
-5. Download progress streams in real time. Files are saved to `Documents\MediaDetector`.
-
----
-
-## Project Structure
-
-```
-app/
-  page.tsx                    -- main UI
-  layout.tsx                  -- root layout, applies theme
-  globals.css                 -- CSS color tokens for light + dark theme
-  api/
-    detect/route.ts           -- POST: fetch media info from a YouTube URL
-    download/route.ts         -- POST: stream download progress (NDJSON)
-    status/route.ts           -- GET: check Python + yt-dlp, auto-update yt-dlp
-    ytdlp/install/route.ts    -- POST: install yt-dlp via pip (streamed output)
-    ytdlp/update/route.ts     -- POST: update yt-dlp via yt-dlp -U (streamed output)
-    open-folder/route.ts      -- POST: open the download folder in Explorer
-
-components/
-  StatusBar.tsx               -- one row per dependency; dot + label + message + action
-  UrlInput.tsx                -- URL input form
-  MediaInfo.tsx               -- title, channel, duration, thumbnail
-  FormatTabs.tsx              -- Video / Audio tab switcher
-  FormatRow.tsx               -- single format row with download button and progress
-  DownloadProgress.tsx        -- progress bar and "Open Folder" button
-  LogPanel.tsx                -- scrollable log output for install/update streams
-
-lib/
-  ytdlp.ts                    -- spawn helpers (execArgs, execCommand, streamCommand),
-                                 output parsers (parseMediaInfo, parseProgress, parseDestination),
-                                 and file utilities (ensureOutputDir)
-  validate.ts                 -- isYouTubeUrl: accepts youtube.com and music.youtube.com only
-
-types/
-  media.ts                    -- shared TypeScript types (MediaInfo, VideoFormat, AudioFormat,
-                                 StatusResult, DownloadStreamLine, etc.)
+```bash
+cd desktop
+dotnet publish MediaDetector.App -c Release -r win-x64 --self-contained false
 ```
 
 ---
 
-## API Reference
+## Tests
 
-### GET /api/status
-
-Returns the current dependency status. Checks Python and yt-dlp, attempts to auto-update yt-dlp, and caches the result.
-
-Add `?refresh=1` to bust the cache.
-
-Response:
-```json
-{
-  "python": { "found": true, "version": "3.12.2" },
-  "ytdlp":  { "found": true, "version": "2025.04.15", "updateStatus": "up-to-date" }
-}
+```bash
+cd desktop
+dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj
 ```
 
-`updateStatus` values: `"updated"` | `"up-to-date"` | `"failed"` | `"skipped"`
+230 cases, about nine seconds. None of them spawn yt-dlp or touch the network:
+the process layer, the retry engine and the dependency probes are all injected.
 
 ---
 
-### POST /api/detect
+## Where things go
 
-Body: `{ "url": "<youtube-url>" }`
+- Downloads: `~/Documents/MediaDetector`, changeable in the app.
+- Settings: `%LOCALAPPDATA%\MediaDetector\settings.json`
+- Logs: `%LOCALAPPDATA%\MediaDetector\logs` (last 10 runs)
 
-Returns parsed media metadata including available video and audio formats.
-
----
-
-### POST /api/download
-
-Body: `{ "url": "...", "formatId": "...", "title": "...", "ext": "..." }`
-
-Streams NDJSON lines:
-```
-{"type":"progress","percent":42}
-{"type":"done","savedPath":"C:\\Users\\...\\Documents\\MediaDetector\\title.mp4"}
-{"type":"error","message":"..."}
-```
+The in-app log panel shows the same lines live, including yt-dlp's own output,
+which is where the cause of a failed download usually is.
 
 ---
 
-### POST /api/ytdlp/install
+## History
 
-Streams plain-text pip output. Call after `GET /api/status?refresh=1` to verify the install.
-
----
-
-### POST /api/ytdlp/update
-
-Same as install but runs `yt-dlp -U`. Streams output.
-
----
-
-### POST /api/open-folder
-
-Body: `{ "path": "<directory>" }`
-
-Opens the given directory in the system file explorer (Windows Explorer).
-
----
-
-## Theme
-
-Colors are defined as CSS custom properties in `app/globals.css` and adapt automatically to the OS dark/light preference via `@media (prefers-color-scheme: dark)`. There is no manual toggle.
-
-All components use `var(--token-name)` via inline `style` props or Tailwind arbitrary values.
-
----
-
-## Development Commands
-
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start dev server at localhost:3000 |
-| `npm run build` | Production build |
-| `npm start` | Start production server |
-| `npm test` | Run all tests (Jest, jsdom + node environments) |
-| `npm run test:watch` | Watch mode |
-| `npx tsc --noEmit` | Type check without emitting |
-
----
-
-## Tech Stack
-
-| Layer | Choice |
-|-------|--------|
-| Framework | Next.js 16 (App Router) |
-| UI | React 19 |
-| Styling | Tailwind CSS v4 + CSS custom properties |
-| Language | TypeScript 5 (strict) |
-| Testing | Jest 30, @testing-library/react |
-| Media tool | yt-dlp (external, Python-based) |
+This was a Next.js web app until it was rewritten as a desktop application and
+the web version removed. `CLAUDE.md` documents the architecture and the
+non-obvious constraints; `docs/desktop-rewrite/plan.md` is the rewrite plan.

@@ -1,51 +1,45 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Build output. desktop/.gitignore also carries bin/ and obj/ so the rule
+# applies at every project level, not just here.
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
+# The vendored-ffmpeg drop point. Its README explains what goes there and must
+# survive the bin/ rule above.
+!bin/README.md
 
-# testing
-/coverage
+# Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
 
-# next.js
-/.next/
-/out/
+# NuGet
+*.nupkg
+packages/
+!packages/build/
 
-# production
-/build
+# Test and coverage output
+[Tt]est[Rr]esult*/
+coverage/
+*.coverage
+*.trx
+
+# Publish output
+publish/
+*.publishsettings
 
 # misc
 .DS_Store
 *.pem
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# env files (can opt-in for committing if needed)
 .env*
-
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
 
 # brainstorm files
 .superpowers/
-
-# vendored ffmpeg binaries (see bin/README.md) -- large, opt-in to committing
-/bin/*
-!/bin/README.md
 
 # scratch: filename preview dump (not part of the app)
 /playlist-names.txt

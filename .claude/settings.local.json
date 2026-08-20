@@ -8,5 +8,6 @@
       "Bash(mv \"C:\\\\Users\\\\NamNguyen\\\\.claude\\\\skills\\\\quick-implement\" \"C:\\\\Users\\\\NamNguyen\\\\.claude\\\\skills\\\\s3-implement\")",
       "Bash(mv \"C:\\\\Users\\\\NamNguyen\\\\.claude\\\\skills\\\\spec-implementation-review\" \"C:\\\\Users\\\\NamNguyen\\\\.claude\\\\skills\\\\s4-impl-review\")"
     ]
-  }
+  },
+  "outputStyle": "default"
 }
