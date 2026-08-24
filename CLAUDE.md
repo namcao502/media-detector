@@ -12,11 +12,12 @@ This started as a Next.js web app; that version was removed once the desktop app
 
 ## Commands
 
+Run from the repo root -- the projects are not nested under a `desktop/` subfolder.
+
 ```bash
-cd desktop
 dotnet build MediaDetector.sln                       # build everything
 dotnet run --project MediaDetector.App               # run the app
-dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj   # 230 tests, ~9s
+dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj   # 235 tests, ~9s
 dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj --filter "FullyQualifiedName~PlaylistOrchestratorTests"
 ```
 
@@ -28,7 +29,7 @@ dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj --filter "F
 |---|---|
 | `MediaDetector.Core` | All logic. **No UI reference** -- everything here is testable headless |
 | `MediaDetector.App` | WPF views, view models, theme |
-| `MediaDetector.Core.Tests` | 230 xUnit cases. No network, no spawning |
+| `MediaDetector.Core.Tests` | 235 xUnit cases. No network, no spawning |
 | `MediaDetector.App.Tests` | Exists but empty. The view models touch `Application.Current.Dispatcher` in their constructors, so testing them needs an `Application` instance |
 
 ## Runtime dependencies (external, checked at runtime, not NuGet)
@@ -38,7 +39,7 @@ dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj --filter "F
 | Python 3.8+ | `python`/`python3 --version` | Manual (python.org) | Yes |
 | yt-dlp | `python -m yt_dlp --version` | In-app: `python -m pip install yt-dlp mutagen` | Yes |
 | **Node.js** | `node --version` at a resolved absolute path | In-app: winget `OpenJS.NodeJS.LTS` / choco `nodejs-lts` | **Yes** |
-| ffmpeg (+ffprobe) | `ffmpeg -version` | In-app: winget `Gyan.FFmpeg` / choco; or vendored `bin/` | Optional |
+| ffmpeg (+ffprobe) | `ffmpeg -version` | In-app: winget `Gyan.FFmpeg` / choco; or vendored `vendor/` | Optional |
 
 Both pip and yt-dlp are invoked as `python -m ...` (`YtdlpArgs.Pip` / `YtdlpArgs.Ytdlp`) because a fresh python.org install does not put Python's `Scripts` dir on PATH. yt-dlp is updated with `pip install --upgrade`, not `yt-dlp -U`, which refuses for pip installs. `mutagen` rides along because yt-dlp needs it (or AtomicParsley) to embed cover art into mp4/m4a; the ffmpeg-only fallback fails there and produces files with no image data.
 
@@ -116,6 +117,14 @@ Files save as `<title> - <artist>.<ext>`. Everything here is pure and has tests.
 
 **Typed names are untrusted input pasted into an absolute path**, so both download paths run them through `SanitizeUserStem`. That leans on both separators mapping to full-width lookalikes, which makes the result a single path component by construction: `../../etc/passwd` becomes a literal file inside the download folder. Tests cover the traversal attempts; keep them.
 
+### Embedded metadata (`Core/Ytdlp/MetadataTagger.cs`)
+
+Renaming a file, ours or the user's own in File Explorer, only ever changes the filename. Apple Music and the Windows Music app read the file's **embedded** tag (ID3 `TIT2`/`TPE1`, MP4 `©nam`/`©ART`), which `--embed-metadata` (`FormatArgs.Metadata`) writes from the raw YouTube title/uploader regardless of what we name the file. `MetadataTagger.TryWriteTagsAsync` corrects that tag after a successful download, using `FileNaming.SplitName`'s same title/artist split as `DownloadStem` -- kept as two separate tag fields rather than one combined string. `FileNaming.MetadataOverrideFor` decides whether it's worth doing at all: skipped when `CleanNames` is off and there is no typed name, since `RawStem`'s filename is the raw title verbatim and already matches what `--embed-metadata` wrote by default.
+
+Values reach the tag writer purely through Python `argv`, not yt-dlp's own `--parse-metadata`. That flag regex-matches an expanded output-template string, which is fragile for literal title text containing regex/template metacharacters (`%`, `(`, `)` -- common in real titles) and only runs when ffmpeg is present. `argv` has neither problem and needs no ffmpeg -- it works off mutagen alone (already a required pip dependency, `Dependencies/Installer.cs`). Best-effort only: `File(path, easy=True)` returns `None` for a container mutagen cannot tag (opus-in-webm from "Best available, no conversion"), and any failure is logged, never raised -- a tag-write failure must not fail a download that otherwise succeeded.
+
+**Raw-mode downloads are never auto-corrected** (that is the whole point of `MetadataOverrideFor`'s skip), so a file downloaded with Clean names off keeps whatever `--embed-metadata` wrote, permanently. The "Fix metadata" button in the header (`MainWindow.xaml`, `MainViewModel.OpenMetadataFixCommand`) opens `MetadataFixWindow`, a self-contained dialog for exactly that case: pick any file on disk, its *current* title/artist tag is read via `MetadataTagger.ReadTagsAsync` to prefill two editable fields, and Save calls `TryWriteTagsAsync` directly -- no re-download, no original YouTube URL needed. `ReadTagsAsync` prints JSON rather than plain lines because `ProcessRunner` trims stdout as one block, which a delimiter-based format could misparse if a tag value contained a newline.
+
 ### Diagnostics (`Core/Diagnostics/AppLog.cs`)
 
 A windowed app has no console, so everything yt-dlp printed that the parser did not recognise -- including the real error text on a failure -- had nowhere to go. `AppLog` is a 2000-entry ring buffer the UI binds to, plus a rolling file under `%LOCALAPPDATA%\MediaDetector\logs` (last 10 runs).
@@ -143,19 +152,19 @@ Apple-ish design system. `Themes/Light.xaml` and `Dark.xaml` hold **32 keys each
 
 Buttons use a small fixed corner radius, **not** full-radius capsules: WPF clamps `CornerRadius` to half the shorter side, so a short label came out as an oval.
 
-### Fixed-frame layout
+### Resizable frame, not a scrolling page
 
-The window is a **fixed frame, not a scrolling page** (720 wide, pinned via `MinWidth`/`MaxWidth`). Chrome sits in `Auto` rows; one star row absorbs the rest. Anything of unbounded length scrolls *inside its own panel*.
+The window resizes freely (`MinWidth="600"`, `MinHeight="700"`, no maximums either way). The outer `Grid` stretches to the window's client area -- its default `HorizontalAlignment`, no fixed `Width` -- so growing the window grows the content instead of leaving margins. Chrome sits in `Auto` rows; the one star row (shared by the format list and the playlist card, via `StarIfVisible` on each, since only one is ever visible) absorbs whatever height is left, and both lists scroll *inside their own panel* once they run out of room. Anything of unbounded length works the same way. Previously the whole page scrolled, so a long playlist pushed the title and the URL box off the top -- that's what this avoids.
 
 Traps that cost real time here:
 
-- **`MaxWidth` + `HorizontalAlignment="Center"` sizes a panel to its content** and only clamps at the maximum. Every card was as wide as its longest string, so the layout jumped when the status text changed. Use `Width`.
+- **`MaxWidth` + `HorizontalAlignment="Center"` sizes a panel to its content** and only clamps at the maximum. Every card was as wide as its longest string, so the layout jumped when the status text changed. Let the panel stretch to its parent instead (the default alignment) rather than reaching for `MaxWidth`.
 - **`ListBox` defaults `HorizontalScrollBarVisibility` to `Auto`**, which measures items with infinite width, so `TextTrimming` never fires. Set it `Disabled`.
 - **An `Auto` column is only as wide as its own row's content**, so per-row status cells gave every row a different right edge. Fixed widths.
 - **A star row keeps its share even when its child is `Collapsed`** -- hence `VisibilityToStarHeight`.
-- **A `MinHeight` that cannot be honoured overflows and the Grid clips whole rows away.** That silently removed the rename controls and the track list at small window sizes.
+- **A `MinHeight` that cannot be honoured overflows and the Grid clips whole rows away.** That silently removed whole rows (rename controls, the track list) at small window sizes. Neither the format list nor the playlist track list carries an explicit `MinHeight` for this reason -- both just shrink with the star row down to whatever the window allows.
 
-The track list shows 10 rows (`MaxHeight="200"`); the log is always open at 5 lines and auto-scrolls.
+The playlist track list and the format list both grow and shrink with the window (star row + internal `ScrollViewer`); neither is capped to a fixed row count anymore.
 
 ### Converters
 

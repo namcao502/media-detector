@@ -8,7 +8,7 @@ detects the available formats, and streams progress per track.
 
 - Single videos: pick any video or audio format, with the best one badged.
 - Playlists: pick one format for the batch, download several tracks at once,
-  with per-track retry and rename.
+  with per-track retry.
 - Files are named `<title> - <artist>.<ext>`, with an editable preview.
 - Metadata and cover art are embedded when ffmpeg is available.
 
@@ -34,14 +34,12 @@ Only Python has to be installed by hand. The app's dependency panel has an
 ## Running it
 
 ```bash
-cd desktop
 dotnet run --project MediaDetector.App
 ```
 
 Or build a release you can launch from Explorer:
 
 ```bash
-cd desktop
 dotnet publish MediaDetector.App -c Release -r win-x64 --self-contained false
 ```
 
@@ -50,11 +48,10 @@ dotnet publish MediaDetector.App -c Release -r win-x64 --self-contained false
 ## Tests
 
 ```bash
-cd desktop
 dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj
 ```
 
-230 cases, about nine seconds. None of them spawn yt-dlp or touch the network:
+235 cases, about nine seconds. None of them spawn yt-dlp or touch the network:
 the process layer, the retry engine and the dependency probes are all injected.
 
 ---
@@ -74,4 +71,4 @@ which is where the cause of a failed download usually is.
 
 This was a Next.js web app until it was rewritten as a desktop application and
 the web version removed. `CLAUDE.md` documents the architecture and the
-non-obvious constraints; `docs/desktop-rewrite/plan.md` is the rewrite plan.
+non-obvious constraints.

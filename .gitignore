@@ -1,13 +1,12 @@
-# Build output. desktop/.gitignore also carries bin/ and obj/ so the rule
-# applies at every project level, not just here.
+# Build output.
 [Bb]in/
 [Oo]bj/
 [Dd]ebug/
 [Rr]elease/
 
-# The vendored-ffmpeg drop point. Its README explains what goes there and must
-# survive the bin/ rule above.
-!bin/README.md
+# The vendored-ffmpeg drop point (vendor/). Named to avoid the bin/ rule above,
+# so the README needs no exception -- only the binaries themselves are ignored.
+vendor/*.exe
 
 # Visual Studio / Rider / VS Code
 .vs/

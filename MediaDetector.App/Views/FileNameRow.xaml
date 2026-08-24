@@ -1,0 +1,78 @@
+<UserControl x:Class="MediaDetector.App.Views.FileNameRow"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:v="clr-namespace:MediaDetector.App.Views">
+    <UserControl.Resources>
+        <v:BoolToVisibility x:Key="Show"/>
+        <v:BoolToVisibility x:Key="Hide" Invert="True"/>
+        <v:NotNullToVisibility x:Key="ShowIfSet"/>
+    </UserControl.Resources>
+
+    <Border Style="{StaticResource Card}">
+        <StackPanel>
+            <!-- Display mode. -->
+            <Grid Visibility="{Binding IsEditing, Converter={StaticResource Hide}}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="File name" Style="{StaticResource Secondary}"
+                           FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <TextBlock Grid.Column="1" Text="{Binding Result}" FontSize="12"
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                           ToolTip="{Binding Result}"/>
+                <Button Grid.Column="2" Content="Edit" Command="{Binding StartEditingCommand}"
+                        Style="{StaticResource PillNeutral}" Margin="8,0,0,0"/>
+            </Grid>
+
+            <!-- Edit mode. -->
+            <StackPanel Visibility="{Binding IsEditing, Converter={StaticResource Show}}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="File name" Style="{StaticResource Secondary}"
+                               FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <TextBox Grid.Column="1" x:Name="Editor" FontSize="12"
+                             Text="{Binding Draft, UpdateSourceTrigger=PropertyChanged}"
+                             SpellCheck.IsEnabled="False">
+                        <TextBox.InputBindings>
+                            <KeyBinding Key="Enter" Command="{Binding CommitCommand}"/>
+                            <KeyBinding Key="Escape" Command="{Binding CancelEditingCommand}"/>
+                        </TextBox.InputBindings>
+                    </TextBox>
+                    <Button Grid.Column="2" Content="Save" Command="{Binding CommitCommand}"
+                            Style="{StaticResource PillPrimary}" Margin="8,0,0,0"/>
+                    <Button Grid.Column="3" Content="Cancel" Command="{Binding CancelEditingCommand}"
+                            Style="{StaticResource PillNeutral}" Margin="8,0,0,0"/>
+                </Grid>
+                <TextBlock Style="{StaticResource Muted}" Margin="0,6,0,0"
+                           Text="The extension is added automatically. Enter to save, Escape to cancel."/>
+            </StackPanel>
+
+            <!-- Custom-name notice. -->
+            <StackPanel Orientation="Horizontal" Margin="0,6,0,0"
+                        Visibility="{Binding CustomName, Converter={StaticResource ShowIfSet}}">
+                <TextBlock Text="Custom name" Style="{StaticResource Muted}" VerticalAlignment="Center"/>
+                <Button Content="Reset to automatic" Command="{Binding ResetToAutomaticCommand}"
+                        Style="{StaticResource PillNeutral}" Margin="8,0,0,0"/>
+            </StackPanel>
+
+            <!-- Only worth offering when the two actually differ. -->
+            <StackPanel Margin="0,6,0,0"
+                        Visibility="{Binding Changed, Converter={StaticResource Show}}">
+                <Button HorizontalAlignment="Left" Command="{Binding ToggleShowOriginalCommand}"
+                        Style="{StaticResource PillNeutral}" Content="Show original name"/>
+                <TextBlock Margin="0,4,0,0" Style="{StaticResource Muted}"
+                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Original}"
+                           Visibility="{Binding ShowOriginal, Converter={StaticResource Show}}">
+                    <Run Text="was: "/><Run Text="{Binding Original, Mode=OneWay}"/>
+                </TextBlock>
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</UserControl>
