@@ -1,7 +1,22 @@
 using System.Diagnostics;
+using MediaDetector.Core.Dependencies;
 using MediaDetector.Core.Processes;
 
 namespace MediaDetector.Core.Tests.Processes;
+
+// "hai kich" with its Vietnamese diacritics. Chosen because it is what actually
+// broke: cp1252 has a byte for the a-grave but none for the i-dot-below, so a
+// mis-encoded pipe mangles one character and silently deletes the other.
+internal static class NonAscii
+{
+    public const string Sample = "hài kịch";
+
+    // Mimics yt-dlp's write_string(): encode to whatever sys.stdout claims, and
+    // drop anything that will not fit. Under cp1252 this yields "h?i kch".
+    public const string EchoScript =
+        "import sys; sys.stdout.buffer.write("
+        + "'h\\u00e0i k\\u1ecbch'.encode(sys.stdout.encoding, 'ignore') + b'\\n')";
+}
 
 public class JobObjectTests
 {
@@ -124,6 +139,19 @@ public class ProcessRunnerTests
         Assert.Equal("a&whoami", result.Stdout);
     }
 
+    // Regression: we decode the pipe as UTF-8 but Python encodes a redirected
+    // stdout in the ANSI codepage, so this came back as "h?i kch" and every path
+    // MetadataTagger was handed named a file that did not exist.
+    [Fact]
+    public async Task RunAsync_RoundTripsNonAsciiChildOutput()
+    {
+        var python = await DependencyChecker.ResolvePythonAsync();
+        var result = await ProcessRunner.RunAsync([python, "-c", NonAscii.EchoScript]);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(NonAscii.Sample, result.Stdout);
+    }
+
     [Fact]
     public async Task RunAsync_HonoursCancellation()
     {
@@ -176,6 +204,18 @@ public class LineStreamTests
     public async Task StreamAsync_SkipsBlankLines()
         => Assert.Equal(["a", "b"],
             await Collect(LineStream.StreamAsync(["cmd.exe", "/c", "echo a& echo.& echo b"])));
+
+    // Same regression as ProcessRunner, on the path downloads actually use: a
+    // mangled "[download] Destination:" line is where the broken savedPath came
+    // from, so the bytes have to survive before OutputParser ever sees them.
+    [Fact]
+    public async Task StreamAsync_RoundTripsNonAsciiChildOutput()
+    {
+        var python = await DependencyChecker.ResolvePythonAsync();
+        var lines = await Collect(LineStream.StreamAsync([python, "-c", NonAscii.EchoScript]));
+
+        Assert.Equal([NonAscii.Sample], lines);
+    }
 
     [Fact]
     public async Task StreamAsync_MissingExecutableYieldsErrorLine()

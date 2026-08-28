@@ -17,7 +17,7 @@ Run from the repo root -- the projects are not nested under a `desktop/` subfold
 ```bash
 dotnet build MediaDetector.sln                       # build everything
 dotnet run --project MediaDetector.App               # run the app
-dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj   # 235 tests, ~9s
+dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj   # 249 tests, ~9s
 dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj --filter "FullyQualifiedName~PlaylistOrchestratorTests"
 ```
 
@@ -29,7 +29,7 @@ dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj --filter "F
 |---|---|
 | `MediaDetector.Core` | All logic. **No UI reference** -- everything here is testable headless |
 | `MediaDetector.App` | WPF views, view models, theme |
-| `MediaDetector.Core.Tests` | 235 xUnit cases. No network, no spawning |
+| `MediaDetector.Core.Tests` | 249 xUnit cases. No network, no spawning |
 | `MediaDetector.App.Tests` | Exists but empty. The view models touch `Application.Current.Dispatcher` in their constructors, so testing them needs an `Application` instance |
 
 ## Runtime dependencies (external, checked at runtime, not NuGet)
@@ -64,10 +64,11 @@ Miss any of them and the download dies with `HTTP Error 403: Forbidden`. Because
 - `TrackRunner` -- one yt-dlp download. `ExitCode` is valid once enumeration completes and is what tells success from failure.
 - `JobObject` -- Win32 job object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. **This is why cancel works.** `proc.Kill()` reaps only the direct child and would orphan the ffmpeg yt-dlp spawned.
 
-Two non-obvious rules, both learned the hard way:
+Three non-obvious rules, all learned the hard way:
 
 1. **EOF sentinel, not `Process.Exited`.** The exit event can beat the async stdout drain, and the dropped tail is exactly where `savedPath` lives. Both `LineStream` and `TrackRunner` complete their channel only after *both* streams report null.
 2. **Merge stdout and stderr through one `Channel`** or you deadlock on the 64 KB pipe buffer.
+3. **`PYTHONIOENCODING=utf-8` on every child**, set once in `ProcessRunner.NewPsi` (which `LineStream` also uses, so the contract lives in one place). We decode the pipe as UTF-8, but Python encodes a *redirected* stdout in the ANSI codepage -- `cp1252` on a normal Windows box -- and yt-dlp's `write_string` drops what will not fit with `errors='ignore'`. So a folder named `hài kịch` arrived as `h?i kch`: one character replaced, one deleted outright. Every `savedPath` for a non-ASCII path then named a file that did not exist, and `MetadataTagger` failed on all of them while the download itself looked fine. Silent, because the tag write is best-effort by design. Regression tests: `RunAsync_RoundTripsNonAsciiChildOutput` and `StreamAsync_RoundTripsNonAsciiChildOutput` -- both fail with the exact `h?i kch` mangling if the env var is removed.
 
 **Hang watchdog.** ffmpeg postprocessing is silent by design (yt-dlp swallows its output), so a deadline is the only way to tell "working" from "wedged". `TrackRunner` re-arms a timer on every line; after `DefaultIdleTimeout` (5 min) of silence it emits `HungMarker` and kills the tree. The orchestrator treats a hang as non-transient and stops retrying that track immediately -- otherwise one wedged track costs 10 x 5 min.
 
@@ -124,6 +125,16 @@ Renaming a file, ours or the user's own in File Explorer, only ever changes the 
 Values reach the tag writer purely through Python `argv`, not yt-dlp's own `--parse-metadata`. That flag regex-matches an expanded output-template string, which is fragile for literal title text containing regex/template metacharacters (`%`, `(`, `)` -- common in real titles) and only runs when ffmpeg is present. `argv` has neither problem and needs no ffmpeg -- it works off mutagen alone (already a required pip dependency, `Dependencies/Installer.cs`). Best-effort only: `File(path, easy=True)` returns `None` for a container mutagen cannot tag (opus-in-webm from "Best available, no conversion"), and any failure is logged, never raised -- a tag-write failure must not fail a download that otherwise succeeded.
 
 **Raw-mode downloads are never auto-corrected** (that is the whole point of `MetadataOverrideFor`'s skip), so a file downloaded with Clean names off keeps whatever `--embed-metadata` wrote, permanently. The "Fix metadata" button in the header (`MainWindow.xaml`, `MainViewModel.OpenMetadataFixCommand`) opens `MetadataFixWindow`, a self-contained dialog for exactly that case: pick any file on disk, its *current* title/artist tag is read via `MetadataTagger.ReadTagsAsync` to prefill two editable fields, and Save calls `TryWriteTagsAsync` directly -- no re-download, no original YouTube URL needed. `ReadTagsAsync` prints JSON rather than plain lines because `ProcessRunner` trims stdout as one block, which a delimiter-based format could misparse if a tag value contained a newline.
+
+### Bulk repair (`Core/Ytdlp/MetadataBackfill.cs`)
+
+Repairs files downloaded before the `PYTHONIOENCODING` fix, whose tag write failed silently on every non-ASCII path. Reached from the same "Fix metadata" dialog ("Repair a whole folder").
+
+The correction is recomputed from each file's **own current tag**, not by reverse-parsing its filename: `--embed-metadata` wrote exactly the raw title and uploader that `DownloadService` fed to `FileNaming.SplitName`, so replaying `SplitName` over them reproduces what should have been written. Going back through the filename would have to undo `SanitizeFilename`'s full-width substitutions, which are not reversible (`|` -> `｜` is lossy in that direction).
+
+- **`CorrectionFor` is pure and returns null when nothing needs writing**, which is what makes a second run a no-op instead of rewriting the whole folder. `CorrectionFor_IsIdempotent` pins it.
+- **Not recursive, on purpose.** Pointed at a music library root this would run `CleanTitle`/`ParseShowTitle` over unrelated files. Scoped to the one folder the user picks, with a count confirmed before any write.
+- A tag that already equals its `SplitName` output is left alone -- titles with no cast pattern to extract (no quoted span, no genre + comma-list) legitimately keep their pipes, and tag and filename still agree.
 
 ### Diagnostics (`Core/Diagnostics/AppLog.cs`)
 

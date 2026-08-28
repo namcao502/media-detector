@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.Versioning;
-using System.Text;
 using System.Threading.Channels;
 
 namespace MediaDetector.Core.Processes;
@@ -16,15 +15,7 @@ public static class LineStream
         IReadOnlyList<string> args,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
-        var psi = new ProcessStartInfo(args[0])
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-        };
+        var psi = ProcessRunner.NewPsi(args[0]);
         foreach (var arg in args.Skip(1)) psi.ArgumentList.Add(arg);
 
         // Unbounded: yt-dlp bursts output, and a bounded writer would block the

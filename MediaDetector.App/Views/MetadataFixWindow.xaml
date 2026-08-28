@@ -75,5 +75,32 @@
             <Button Content="Save" Command="{Binding SaveCommand}" Style="{StaticResource PillPrimary}"
                     IsEnabled="{Binding CanSave}"/>
         </StackPanel>
+
+        <!-- A stock Separator draws in the system colour and ignores the theme. -->
+        <Border Height="1" Background="{DynamicResource Border}" Margin="0,16,0,12"/>
+
+        <TextBlock Text="Repair a whole folder" FontWeight="SemiBold" Margin="0,0,0,4"/>
+        <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10">
+            <Run Text="Recomputes the title and artist for every file in one folder from its own current tag. Use this on downloads made before the encoding fix, whose tag was left as the raw YouTube title. Subfolders are not touched."/>
+        </TextBlock>
+
+        <TextBlock TextWrapping="Wrap" Margin="0,0,0,8"
+                   Visibility="{Binding FolderStatus, Converter={StaticResource ShowIfSet}}">
+            <TextBlock.Style>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                    <Setter Property="Text" Value="{Binding FolderStatus}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource StatusOk}"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding FolderStatusIsError}" Value="True">
+                            <Setter Property="Foreground" Value="{DynamicResource TextStatusError}"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
+
+        <Button Content="Choose folder..." Command="{Binding FixFolderCommand}"
+                Style="{StaticResource PillNeutral}" HorizontalAlignment="Right"
+                IsEnabled="{Binding CanFixFolder}"/>
     </StackPanel>
 </Window>
