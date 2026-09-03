@@ -142,18 +142,17 @@
                 </Grid>
             </StackPanel>
 
-            <!-- Track list. Fills the star row, so it grows and shrinks with the
-                 window like the video/audio format list does; whatever does not
-                 fit scrolls, so a 1200-track playlist is still fully reachable
-                 and the summary below it is always on screen. -->
+            <!-- Fills the star row so it shrinks with the window, but MaxHeight
+                 stops it growing past ~15 rows (20px each: a 14px icon plus the
+                 ListBoxItem's 4px padding). A 142-track playlist otherwise ran
+                 the full height of a tall window. MaxHeight only: a MinHeight that
+                 cannot be honoured makes the Grid clip whole rows away. -->
             <!-- HorizontalScrollBarVisibility=Disabled is load-bearing, not tidying:
                  a ListBox defaults it to Auto, which measures every item with
-                 INFINITE width. TextTrimming can never fire under that, so a long
-                 title stretched its row past the viewport instead of ellipsising
-                 and each row ended up a different width. Disabled pins items to
-                 the viewport width, which is what makes the ellipsis work. -->
+                 INFINITE width, so TextTrimming never fires and each row ends up a
+                 different width. -->
             <ListBox x:Name="TrackList" Grid.Row="3" ItemsSource="{Binding Tracks}"
-                     Margin="0,6,0,0"
+                     Margin="0,6,0,0" MaxHeight="300" VerticalAlignment="Top"
                      Background="Transparent" BorderThickness="0"
                      ScrollViewer.VerticalScrollBarVisibility="Auto"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"

@@ -153,7 +153,9 @@ Guards worth preserving, each with a test:
 - Abandoning the enumerator cancels the workers. Without it they keep spawning yt-dlp for the rest of the playlist with nobody reading.
 - A cancelled track exits non-zero exactly like a failed one, so the retry loop checks the token before trying again.
 
-Concurrency is capped at 8 on purpose: past a handful the gain flattens while each track's ffmpeg postprocess is CPU-bound and more parallel requests raise the transient-failure rate the retry engine has to absorb. Measured 29.6s -> 11.7s going from 1 to 3 on a six-track batch.
+The picker offers **1, 2, 5, 10, 15** (`PlaylistViewModel.ConcurrencyChoices`), default 5. Measured 29.6s -> 11.7s going from 1 to 3 on a six-track batch; past a handful the gain flattens while each track's ffmpeg postprocess is CPU-bound and more parallel requests raise the transient-failure rate the retry engine has to absorb. The high end exists to be chosen, not because it is a good idea.
+
+**The list is sparse, so a persisted value is snapped, not clamped.** `Math.Clamp` keeps an in-range value like 3 or 8 that matches no entry, which leaves the ComboBox's `SelectedItem` bound to nothing and the picker blank. `NearestConcurrencyChoice` is what carries an older default across.
 
 ### Format selection (`Core/Ytdlp/FormatArgs.cs`)
 
@@ -249,7 +251,7 @@ Traps that cost real time here:
 - **A star row keeps its share even when its child is `Collapsed`** -- hence `VisibilityToStarHeight`.
 - **A `MinHeight` that cannot be honoured overflows and the Grid clips whole rows away.** That silently removed whole rows (rename controls, the track list) at small window sizes. Neither the format list nor the playlist track list carries an explicit `MinHeight` for this reason -- both just shrink with the star row down to whatever the window allows.
 
-The playlist track list and the format list both grow and shrink with the window (star row + internal `ScrollViewer`); neither is capped to a fixed row count anymore.
+Both lists shrink with the window (star row + internal `ScrollViewer`). The playlist track list carries a `MaxHeight` of ~15 rows on top of that, because a 142-track playlist otherwise ran the full height of a tall window. `MaxHeight` only -- it caps growth and can always be honoured, unlike the `MinHeight` above.
 
 ### Converters
 

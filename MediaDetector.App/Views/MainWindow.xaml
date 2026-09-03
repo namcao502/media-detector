@@ -5,7 +5,7 @@
         xmlns:v="clr-namespace:MediaDetector.App.Views"
         xmlns:vm="clr-namespace:MediaDetector.App.ViewModels"
         Title="Media Detector" Width="720" MinWidth="600"
-        Height="960" MinHeight="700"
+        Height="800" MinHeight="700"
         Background="{DynamicResource BgPage}"
         FontFamily="Segoe UI Variable Text, Segoe UI"
         TextOptions.TextRenderingMode="ClearType">

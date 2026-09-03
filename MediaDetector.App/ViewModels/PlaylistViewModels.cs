@@ -115,15 +115,18 @@ public sealed partial class PlaylistPanelViewModel : StreamingViewModel
     [ObservableProperty] private PlaylistVideoQuality _videoQuality = PlaylistVideoQuality.Q1080;
 
     // Persisted: a property of the machine and connection, not of one playlist.
-    // Clamped on read, or a hand-edited settings.json binds to no entry at all.
-    [ObservableProperty] private int _concurrency = Math.Clamp(
-        App.Settings.PlaylistConcurrency, AppSettings.MinConcurrency, AppSettings.MaxConcurrency);
+    // Snapped, not clamped: the options are sparse, so an in-range value that is
+    // not one of them (an older default, a hand-edited file) would leave
+    // SelectedItem matching nothing and the picker blank.
+    [ObservableProperty] private int _concurrency =
+        NearestConcurrencyChoice(App.Settings.PlaylistConcurrency);
 
-    // The full clamped range, so every value Concurrency can hold has a matching
-    // entry for SelectedItem to bind to.
-    public IReadOnlyList<int> ConcurrencyOptions { get; } =
-        [.. Enumerable.Range(AppSettings.MinConcurrency,
-            AppSettings.MaxConcurrency - AppSettings.MinConcurrency + 1)];
+    public IReadOnlyList<int> ConcurrencyOptions { get; } = ConcurrencyChoices;
+
+    private static readonly int[] ConcurrencyChoices = [1, 2, 5, 10, 15];
+
+    private static int NearestConcurrencyChoice(int value) =>
+        ConcurrencyChoices.MinBy(c => Math.Abs(c - value));
 
     // MP3 and every video preset need ffmpeg, so the UI disables them without it.
     public bool CanUseVideo => GetFfmpegReady();

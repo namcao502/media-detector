@@ -18,14 +18,15 @@ public sealed class AppSettings
 
     public string? OutputDir { get; set; }
 
-    // 3, not "as many as possible": YouTube throttles per connection so the first
-    // few slots are near-free, then the gain flattens while ffmpeg's CPU cost and
-    // the transient-failure rate do not.
+    // YouTube throttles per connection, so the first few slots are near-free and
+    // the gain flattens well before the ceiling, while ffmpeg's CPU cost and the
+    // transient-failure rate keep climbing. The high end is there to be chosen,
+    // not to be a good idea.
     public int PlaylistConcurrency { get; set; } = DefaultConcurrency;
 
     public const int MinConcurrency = 1;
-    public const int MaxConcurrency = 8;
-    public const int DefaultConcurrency = 3;
+    public const int MaxConcurrency = 15;
+    public const int DefaultConcurrency = 5;
 
     // Written next to the exe when that folder is writable, so a copied app
     // folder keeps its settings. AppPaths owns the fallback.
