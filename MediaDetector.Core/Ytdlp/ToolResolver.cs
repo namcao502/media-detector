@@ -5,9 +5,9 @@ namespace MediaDetector.Core.Ytdlp;
 [SupportedOSPlatform("windows")]
 public static class ToolResolver
 {
-    // Pure and testable: which of these dirs holds the executable.
-    public static string? FirstDirWith(IEnumerable<string> dirs, string exeName) =>
-        dirs.FirstOrDefault(d => File.Exists(Path.Combine(d, exeName)));
+    // Pure and testable: which of these dirs holds ALL of the executables.
+    public static string? FirstDirWith(IEnumerable<string> dirs, params string[] exeNames) =>
+        dirs.FirstOrDefault(d => exeNames.All(exe => File.Exists(Path.Combine(d, exe))));
 
     // winget installs the Gyan.FFmpeg archive package under
     // Packages/<pkg>/<ffmpeg-ver>/bin/ (nested, versioned) with no Links shim or
@@ -47,7 +47,14 @@ public static class ToolResolver
         foreach (var dir in WingetFfmpegBinDirs()) yield return dir;
     }
 
-    public static string? ResolveFfmpegDir() => FirstDirWith(FfmpegDirCandidates(), "ffmpeg.exe");
+    // Both exes, not just ffmpeg.exe: --ffmpeg-location points yt-dlp at ONE
+    // directory and its cover-art embedding runs ffprobe out of it, so a dir
+    // holding half the pair is worse than no match at all -- it used to win the
+    // race against a complete install further down the candidate list and lose
+    // the image with a green status row. Requiring both makes such a dir fall
+    // through to the next candidate, or to PATH.
+    public static string? ResolveFfmpegDir() =>
+        FirstDirWith(FfmpegDirCandidates(), "ffmpeg.exe", "ffprobe.exe");
 
     // Point yt-dlp at the resolved dir when found; [] otherwise (falls back to PATH).
     public static string[] FfmpegLocationArgs()

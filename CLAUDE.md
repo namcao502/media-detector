@@ -17,7 +17,7 @@ Run from the repo root -- the projects are not nested under a `desktop/` subfold
 ```bash
 dotnet build MediaDetector.sln                       # build everything
 dotnet run --project MediaDetector.App               # run the app
-dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj   # 249 tests, ~9s
+dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj   # 262 tests, ~9s
 dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj --filter "FullyQualifiedName~PlaylistOrchestratorTests"
 ```
 
@@ -29,7 +29,7 @@ dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj --filter "F
 |---|---|
 | `MediaDetector.Core` | All logic. **No UI reference** -- everything here is testable headless |
 | `MediaDetector.App` | WPF views, view models, theme |
-| `MediaDetector.Core.Tests` | 249 xUnit cases. No network, no spawning |
+| `MediaDetector.Core.Tests` | 262 xUnit cases. No network, no spawning |
 | `MediaDetector.App.Tests` | Exists but empty. The view models touch `Application.Current.Dispatcher` in their constructors, so testing them needs an `Application` instance |
 
 ## Runtime dependencies (external, checked at runtime, not NuGet)
@@ -39,9 +39,19 @@ dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj --filter "F
 | Python 3.8+ | `python`/`python3 --version` | Manual (python.org) | Yes |
 | yt-dlp | `python -m yt_dlp --version` | In-app: `python -m pip install yt-dlp mutagen` | Yes |
 | **Node.js** | `node --version` at a resolved absolute path | In-app: winget `OpenJS.NodeJS.LTS` / choco `nodejs-lts` | **Yes** |
-| ffmpeg (+ffprobe) | `ffmpeg -version` | In-app: winget `Gyan.FFmpeg` / choco; or vendored `vendor/` | Optional |
+| ffmpeg (+ffprobe) | `ffmpeg -version` **and** `ffprobe -version` | In-app: winget `Gyan.FFmpeg` / choco; or vendored `vendor/` | Optional |
+| mutagen | `python -c "import mutagen"` | In-app: rides along with the yt-dlp install | Optional |
 
 Both pip and yt-dlp are invoked as `python -m ...` (`YtdlpArgs.Pip` / `YtdlpArgs.Ytdlp`) because a fresh python.org install does not put Python's `Scripts` dir on PATH. yt-dlp is updated with `pip install --upgrade`, not `yt-dlp -U`, which refuses for pip installs. `mutagen` rides along because yt-dlp needs it (or AtomicParsley) to embed cover art into mp4/m4a; the ffmpeg-only fallback fails there and produces files with no image data.
+
+### The two "optional" rows are what silently lose cover art and tags
+
+Both are optional only in the sense that a download still succeeds. Miss either and the file arrives with no image; miss mutagen and it *also* keeps the raw YouTube title in its tag forever, because `MetadataTagger` is pure mutagen and never touches ffmpeg. Neither failure surfaces on its own -- `TryWriteTagsAsync` is best-effort by design and `DownloadService` discards its result, yt-dlp degrades mutagen -> AtomicParsley -> ffmpeg without erroring, and `FormatArgs.Metadata` drops every embed flag when ffmpeg is absent. Every one of those is individually correct; stacked, they left the app with no way to say the feature was off. That is why both get their own status row rather than being inferred from the yt-dlp and ffmpeg rows.
+
+Two traps this cost real time on:
+
+- **mutagen is never installed in its own right.** It only ever appears inside `pip install yt-dlp mutagen`, so a machine that got yt-dlp any other way -- by hand, or from a build predating that arg -- has a perfectly working yt-dlp and no mutagen. `BuildAsync` therefore probes it **strictly after** `updateYtdlp`, which installs it; probing first reports a miss the update just repaired. `Probe_ChecksMutagenAfterTheYtdlpUpdate` pins the ordering.
+- **`ResolveFfmpegDir` matches on both exes, not just `ffmpeg.exe`.** `--ffmpeg-location` points yt-dlp at one directory and cover-art embedding runs ffprobe out of it, so a half-populated dir (typically a `vendor/` given only `ffmpeg.exe`) used to beat a complete install further down the candidate list and lose the image behind a green row. Requiring both makes it fall through to the next candidate, or to PATH.
 
 ### Node is the one genuinely new dependency
 

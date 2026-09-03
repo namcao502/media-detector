@@ -126,14 +126,43 @@ public static class DependencyRows
                 "Node missing", RowAction.InstallNode, "https://nodejs.org/en/download");
 
         // Optional: downloads work without it, but metadata/thumbnails need it.
-        var ffmpeg = s.Ffmpeg.Found
-            ? new DependencyRow("ffmpeg", RowState.Ok,
-                $"Version {s.Ffmpeg.Version} detected -- metadata & thumbnails embedded",
-                $"ffmpeg {ShortVersion(s.Ffmpeg.Version)}", RowAction.None)
-            : new DependencyRow("ffmpeg", RowState.Warn,
+        DependencyRow ffmpeg;
+        if (!s.Ffmpeg.Found)
+        {
+            ffmpeg = new DependencyRow("ffmpeg", RowState.Warn,
                 "Not found -- install ffmpeg to embed metadata & cover art", "ffmpeg missing",
                 RowAction.InstallFfmpeg, "https://ffmpeg.org/download.html");
+        }
+        else if (!s.Ffmpeg.FfprobeFound)
+        {
+            // Every real ffmpeg build ships both, so this means a hand-assembled
+            // install -- typically a vendor/ folder given only ffmpeg.exe. The
+            // row stayed green on that setup and the cover art vanished.
+            ffmpeg = new DependencyRow("ffmpeg", RowState.Warn,
+                $"Version {s.Ffmpeg.Version} detected, but ffprobe is missing -- cover art cannot be embedded",
+                $"ffmpeg {ShortVersion(s.Ffmpeg.Version)} (no ffprobe)",
+                RowAction.InstallFfmpeg, "https://ffmpeg.org/download.html");
+        }
+        else
+        {
+            ffmpeg = new DependencyRow("ffmpeg", RowState.Ok,
+                $"Version {s.Ffmpeg.Version} detected -- metadata & thumbnails embedded",
+                $"ffmpeg {ShortVersion(s.Ffmpeg.Version)}", RowAction.None);
+        }
 
-        return [python, ytdlp, node, ffmpeg];
+        // Optional in the same sense as ffmpeg -- the download succeeds either
+        // way. InstallYtdlp is the right action despite the name: that pip call
+        // is `install yt-dlp mutagen`, so it repairs exactly this row.
+        var mutagen = s.Mutagen.Found
+            ? new DependencyRow("mutagen", RowState.Ok,
+                $"Version {s.Mutagen.Version} detected -- cover art & tag correction available",
+                $"mutagen {ShortVersion(s.Mutagen.Version)}", RowAction.None)
+            : new DependencyRow("mutagen", RowState.Warn,
+                "Not found -- cover art and title/artist tag correction are skipped",
+                "mutagen missing",
+                s.Python.Found ? RowAction.InstallYtdlp : RowAction.None,
+                "https://pypi.org/project/mutagen");
+
+        return [python, ytdlp, node, ffmpeg, mutagen];
     }
 }

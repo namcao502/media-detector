@@ -88,14 +88,38 @@ public static class DependencyChecker
             : new DependencyState(false, null);
     }
 
-    public static async Task<DependencyState> ProbeFfmpegAsync()
+    // mutagen has no console entry point, so import it rather than probing for an
+    // exe. Never installed on its own: it rides along with the pip install of
+    // yt-dlp, which means a machine set up before that was added -- or with
+    // yt-dlp installed by any other route -- has none.
+    private const string MutagenVersionScript = "import mutagen; print(mutagen.version_string)";
+
+    public static async Task<DependencyState> ProbeMutagenAsync(string python)
+    {
+        var result = await ProcessRunner.RunAsync([python, "-c", MutagenVersionScript]);
+        return result.ExitCode == 0
+            ? new DependencyState(true, result.Stdout.Trim())
+            : new DependencyState(false, null);
+    }
+
+    // ResolveFfmpegDir only matches a dir holding BOTH exes, so a null dir here
+    // still probes PATH -- where the pair may also be split. Probing ffprobe by
+    // running it covers both cases with one code path.
+    public static async Task<FfmpegState> ProbeFfmpegAsync()
     {
         var dir = ToolResolver.ResolveFfmpegDir();
         var exe = dir == null ? "ffmpeg" : Path.Combine(dir, "ffmpeg.exe");
         var result = await ProcessRunner.RunAsync([exe, "-version"]);
-        if (result.ExitCode != 0) return new DependencyState(false, null);
+        if (result.ExitCode != 0) return new FfmpegState(false, null, false);
+
+        var ffprobeExe = dir == null ? "ffprobe" : Path.Combine(dir, "ffprobe.exe");
+        var ffprobeResult = await ProcessRunner.RunAsync([ffprobeExe, "-version"]);
+
         var match = Regex.Match(result.Stdout, @"ffmpeg version (\S+)");
-        return new DependencyState(true, match.Success ? match.Groups[1].Value : null);
+        return new FfmpegState(
+            true,
+            match.Success ? match.Groups[1].Value : null,
+            ffprobeResult.ExitCode == 0);
     }
 
     // Composed with injectable probes so the ordering rules are unit-testable.
@@ -104,10 +128,12 @@ public static class DependencyChecker
         Func<string, Task<(bool, string?)>> probeYtdlp,
         Func<string, Task<UpdateStatus>> updateYtdlp,
         Func<Task<DependencyState>> probeNode,
-        Func<Task<DependencyState>> probeFfmpeg)
+        Func<Task<FfmpegState>> probeFfmpeg,
+        Func<string, Task<DependencyState>> probeMutagen)
     {
         var (pyFound, pyVersion, pyCmd) = await probePython();
         var ytdlp = new YtdlpState(false, null, UpdateStatus.Skipped);
+        var mutagen = new DependencyState(false, null);
 
         if (pyFound)
         {
@@ -115,6 +141,10 @@ public static class DependencyChecker
             ytdlp = found
                 ? new YtdlpState(true, version, await updateYtdlp(pyCmd))
                 : new YtdlpState(false, null, UpdateStatus.Skipped);
+
+            // Strictly after the update: that pip call installs mutagen alongside
+            // yt-dlp, so probing first would report a miss it just repaired.
+            mutagen = await probeMutagen(pyCmd);
         }
 
         // Node and ffmpeg are independent of Python -- probe regardless.
@@ -122,18 +152,30 @@ public static class DependencyChecker
         var ffmpeg = await probeFfmpeg();
         AppLog.Info("deps",
             $"python={pyFound}({pyVersion}) ytdlp={ytdlp.Found}({ytdlp.Version}) "
-            + $"node={node.Found}({node.Version}) ffmpeg={ffmpeg.Found}({ffmpeg.Version})");
+            + $"node={node.Found}({node.Version}) ffmpeg={ffmpeg.Found}({ffmpeg.Version}) "
+            + $"ffprobe={ffmpeg.FfprobeFound} mutagen={mutagen.Found}({mutagen.Version})");
         if (!node.Found)
             AppLog.Warn("deps",
                 "Node missing: yt-dlp cannot solve YouTube's JS challenges and "
                 + "every format URL will answer HTTP 403.");
+        // Both of these otherwise present as a clean download with no cover art
+        // and, for mutagen, the raw YouTube title left in the tag.
+        if (pyFound && !mutagen.Found)
+            AppLog.Warn("deps",
+                "mutagen missing: cover art cannot be embedded into mp4/m4a and "
+                + "the title/artist tag correction will fail on every download.");
+        if (ffmpeg.Found && !ffmpeg.FfprobeFound)
+            AppLog.Warn("deps",
+                "ffprobe missing alongside ffmpeg: cover art cannot be embedded.");
         return new StatusResult(
             new DependencyState(pyFound, pyVersion),
             ytdlp,
             node,
-            ffmpeg);
+            ffmpeg,
+            mutagen);
     }
 
     public static Task<StatusResult> BuildDefaultAsync() => BuildAsync(
-        ProbePythonAsync, ProbeYtdlpAsync, UpdateYtdlpAsync, ProbeNodeAsync, ProbeFfmpegAsync);
+        ProbePythonAsync, ProbeYtdlpAsync, UpdateYtdlpAsync, ProbeNodeAsync, ProbeFfmpegAsync,
+        ProbeMutagenAsync);
 }

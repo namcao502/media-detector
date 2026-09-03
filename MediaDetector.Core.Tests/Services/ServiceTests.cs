@@ -13,7 +13,8 @@ public class StatusServiceTests
         new DependencyState(true, "3.12.2"),
         new YtdlpState(true, "2026.08.01", UpdateStatus.UpToDate),
         new DependencyState(true, "22.11.0"),
-        new DependencyState(true, "8.1.2"));
+        new FfmpegState(true, "8.1.2", FfprobeFound: true),
+        new DependencyState(true, "1.48.1"));
 
     [Fact]
     public async Task GetAsync_CachesAfterFirstCall()
@@ -46,7 +47,8 @@ public class StatusServiceTests
         Assert.Equal(2, calls);
     }
 
-    // yt-dlp is only probed and updated when Python is present.
+    // yt-dlp is only probed and updated when Python is present. mutagen is
+    // reached through the same interpreter, so it is skipped for the same reason.
     [Fact]
     public async Task Probe_SkipsYtdlpUpdateWhenPythonMissing()
     {
@@ -55,10 +57,12 @@ public class StatusServiceTests
             _ => throw new InvalidOperationException("must not be called"),
             _ => throw new InvalidOperationException("must not be called"),
             () => Task.FromResult(new DependencyState(true, "22.11.0")),
-            () => Task.FromResult(new DependencyState(true, "8.1.2")));
+            () => Task.FromResult(new FfmpegState(true, "8.1.2", FfprobeFound: true)),
+            _ => throw new InvalidOperationException("must not be called"));
 
         Assert.False(result.Python.Found);
         Assert.Equal(UpdateStatus.Skipped, result.Ytdlp.UpdateStatus);
+        Assert.False(result.Mutagen.Found);
         // ffmpeg and Node are independent of Python -- still probed.
         Assert.True(result.Ffmpeg.Found);
         Assert.True(result.Node.Found);
@@ -73,10 +77,55 @@ public class StatusServiceTests
             _ => Task.FromResult((true, (string?)"2026.08.01")),
             _ => { updated = true; return Task.FromResult(UpdateStatus.Updated); },
             () => Task.FromResult(new DependencyState(true, "22.11.0")),
-            () => Task.FromResult(new DependencyState(false, null)));
+            () => Task.FromResult(new FfmpegState(false, null, false)),
+            _ => Task.FromResult(new DependencyState(true, "1.48.1")));
 
         Assert.True(updated);
         Assert.Equal(UpdateStatus.Updated, result.Ytdlp.UpdateStatus);
+    }
+
+    // The yt-dlp update pip-installs mutagen alongside it, so probing mutagen
+    // first would report a miss the update had already repaired. Ordering is the
+    // whole assertion here.
+    [Fact]
+    public async Task Probe_ChecksMutagenAfterTheYtdlpUpdate()
+    {
+        var updateRan = false;
+        var mutagenProbedAfterUpdate = false;
+
+        await DependencyChecker.BuildAsync(
+            () => Task.FromResult((true, (string?)"3.12.2", "python")),
+            _ => Task.FromResult((true, (string?)"2026.08.01")),
+            _ => { updateRan = true; return Task.FromResult(UpdateStatus.Updated); },
+            () => Task.FromResult(new DependencyState(true, "22.11.0")),
+            () => Task.FromResult(new FfmpegState(true, "8.1.2", FfprobeFound: true)),
+            _ =>
+            {
+                mutagenProbedAfterUpdate = updateRan;
+                return Task.FromResult(new DependencyState(true, "1.48.1"));
+            });
+
+        Assert.True(mutagenProbedAfterUpdate);
+    }
+
+    // A machine with yt-dlp installed some other way (or by a build predating
+    // mutagen in the pip args) reports every other dependency healthy.
+    [Fact]
+    public async Task Probe_ReportsMissingMutagenWithEverythingElseHealthy()
+    {
+        var result = await DependencyChecker.BuildAsync(
+            () => Task.FromResult((true, (string?)"3.12.2", "python")),
+            _ => Task.FromResult((true, (string?)"2026.08.01")),
+            _ => Task.FromResult(UpdateStatus.UpToDate),
+            () => Task.FromResult(new DependencyState(true, "22.11.0")),
+            () => Task.FromResult(new FfmpegState(true, "8.1.2", FfprobeFound: true)),
+            _ => Task.FromResult(new DependencyState(false, null)));
+
+        Assert.False(result.Mutagen.Found);
+        Assert.True(result.Python.Found);
+        Assert.True(result.Ytdlp.Found);
+        Assert.True(result.Node.Found);
+        Assert.True(result.Ffmpeg.Found);
     }
 }
 
@@ -84,15 +133,17 @@ public class DependencyRowTests
 {
     private static StatusResult Status(
         bool py = true, bool yt = true, bool node = true, bool ff = true,
+        bool ffprobe = true, bool mutagen = true,
         UpdateStatus update = UpdateStatus.UpToDate) => new(
             new DependencyState(py, py ? "3.12.2" : null),
             new YtdlpState(yt, yt ? "2026.08.01" : null, update),
             new DependencyState(node, node ? "22.11.0" : null),
-            new DependencyState(ff, ff ? "8.1.2" : null));
+            new FfmpegState(ff, ff ? "8.1.2" : null, ff && ffprobe),
+            new DependencyState(mutagen, mutagen ? "1.48.1" : null));
 
     [Fact]
-    public void Build_ReturnsFourRows()
-        => Assert.Equal(4, DependencyRows.Build(Status()).Count);
+    public void Build_ReturnsFiveRows()
+        => Assert.Equal(5, DependencyRows.Build(Status()).Count);
 
     [Fact]
     public void Build_AllHealthyMeansNoProblems()
@@ -126,7 +177,7 @@ public class DependencyRowTests
     [Fact]
     public void Build_SummaryLineMatchesTheRows()
         => Assert.Equal(
-            "Python 3.12.2 . yt-dlp 2026.08.01 . Node 22.11.0 . ffmpeg 8.1.2",
+            "Python 3.12.2 . yt-dlp 2026.08.01 . Node 22.11.0 . ffmpeg 8.1.2 . mutagen 1.48.1",
             string.Join(" . ", DependencyRows.Build(Status()).Select(r => r.Summary)));
 
     // A satisfied dependency has nothing to install. The view binds the button to
@@ -174,12 +225,55 @@ public class DependencyRowTests
     {
         var status = Status() with
         {
-            Ffmpeg = new DependencyState(true, "8.1.2-full_build-www.gyan.dev"),
+            Ffmpeg = new FfmpegState(true, "8.1.2-full_build-www.gyan.dev", FfprobeFound: true),
         };
         var row = DependencyRows.Build(status).First(r => r.Label == "ffmpeg");
         Assert.Contains("8.1.2-full_build-www.gyan.dev", row.Message);
         Assert.Equal("ffmpeg 8.1.2", row.Summary);
     }
+
+    // A half-populated ffmpeg dir used to render a green row while cover art
+    // silently vanished, because only ffmpeg.exe was ever looked for.
+    [Fact]
+    public void Build_FfmpegWithoutFfprobeIsAWarningNotOk()
+    {
+        var row = DependencyRows.Build(Status(ffprobe: false)).First(r => r.Label == "ffmpeg");
+        Assert.Equal(RowState.Warn, row.State);
+        Assert.Contains("ffprobe", row.Message);
+        Assert.True(row.HasAction);
+    }
+
+    // Still a real ffmpeg, so the version stays visible rather than reading as a
+    // total miss -- that is what tells a half-install from no install.
+    [Fact]
+    public void Build_FfmpegWithoutFfprobeStillReportsTheVersion()
+    {
+        var row = DependencyRows.Build(Status(ffprobe: false)).First(r => r.Label == "ffmpeg");
+        Assert.Contains("8.1.2", row.Message);
+        Assert.Equal("ffmpeg 8.1.2 (no ffprobe)", row.Summary);
+    }
+
+    // Optional like ffmpeg: the download still succeeds, it just loses the cover
+    // art and keeps the raw YouTube title in the tag.
+    [Fact]
+    public void Build_MissingMutagenIsAWarning()
+        => Assert.Equal(RowState.Warn,
+            DependencyRows.Build(Status(mutagen: false)).First(r => r.Label == "mutagen").State);
+
+    // The pip install behind InstallYtdlp is `install yt-dlp mutagen`, so it
+    // repairs this row -- but only if there is a Python to run it with.
+    [Fact]
+    public void Build_MissingMutagenOffersAnInstallActionWhenPythonIsPresent()
+    {
+        var row = DependencyRows.Build(Status(mutagen: false)).First(r => r.Label == "mutagen");
+        Assert.True(row.HasAction);
+        Assert.Equal("Install", row.ActionLabel);
+    }
+
+    [Fact]
+    public void Build_MissingMutagenOffersNoActionWithoutPython()
+        => Assert.False(DependencyRows.Build(Status(py: false, mutagen: false))
+            .First(r => r.Label == "mutagen").HasAction);
 }
 
 public class InstallerTests
