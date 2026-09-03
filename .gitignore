@@ -4,9 +4,23 @@
 [Dd]ebug/
 [Rr]elease/
 
-# The vendored-ffmpeg drop point (vendor/). Named to avoid the bin/ rule above,
-# so the README needs no exception -- only the binaries themselves are ignored.
-vendor/*.exe
+# No executable belongs in this repo's history. The vendored tools alone are
+# ~300 MB and git never forgets a blob, so this is a blanket rule rather than a
+# per-folder one: a stray exe committed once cannot be taken back out.
+*.exe
+*.dll
+*.zip
+*.7z
+*.part
+
+# The vendored-tools drop point. Everything except the README, so an interrupted
+# download (.part, a half-extracted archive) is covered without listing types.
+vendor/*
+!vendor/README.md
+
+# Settings and logs. AppPaths puts these at the repo root when the app runs out
+# of a build output inside it, so running the app or the tests creates them here.
+/data/
 
 # Visual Studio / Rider / VS Code
 .vs/

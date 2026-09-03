@@ -1,14 +1,15 @@
 # vendor/ -- ship the tools inside the build
 
-This folder is a **build-time** drop point, not a runtime one.
-`MediaDetector.App.csproj` copies `vendor/*.exe` into a `bin/` subfolder next to
-the built executable, and that copy is what `ToolResolver` reads.
+This folder is a **build-time** drop point. `MediaDetector.App.csproj` copies
+`vendor/*.exe` into a `vendor/` subfolder next to the built executable, and that
+copy is what `ToolResolver` reads. The in-app Install buttons download into the
+same folder, so there is exactly one place tools live at runtime.
 
 ## You usually do not need this
 
-The app's **Install** buttons download the same binaries into
-`<app>/data/tools` at runtime. On a machine with internet that is all you need,
-and this folder can stay empty.
+The app's **Install** buttons download the same binaries into `<app>/vendor` at
+runtime. On a machine with internet that is all you need, and this folder can
+stay empty.
 
 Fill it when you want the published folder to already contain everything:
 
@@ -18,15 +19,16 @@ Fill it when you want the published folder to already contain everything:
 
 ## Where things end up
 
-| Folder | Filled by | Wins? |
-|---|---|---|
-| `<app>/bin` | MSBuild, from this folder | Yes |
-| `<app>/data/tools` | the Install buttons | Only if `bin` has nothing |
+Everything lands in `<app>/vendor`, filled from two directions:
 
-They are separate on purpose. MSBuild rewrites `<app>/bin` on every build, so a
-downloaded file of the same name placed there would be clobbered by the next
-build and restored by the next Install, flip-flopping with no way to tell which
-copy is live.
+| Source | When |
+|---|---|
+| MSBuild, from this folder | every build |
+| the in-app Install buttons | when you click them |
+
+They coexist because `PreserveNewest` compares timestamps: a file downloaded
+after a build survives the next one, and a copy you deliberately refresh here
+wins instead. Whichever is newer is the live one.
 
 PATH, winget and Chocolatey are deliberately not consulted: a tool installed on
 the build machine does not travel with the app, so counting it would make a

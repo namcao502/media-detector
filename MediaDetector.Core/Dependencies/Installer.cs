@@ -24,7 +24,7 @@ public static class Installer
 
     public const string NodeIndexUrl = "https://nodejs.org/dist/index.json";
 
-    private static string TargetDir => ToolResolver.DownloadedToolsDir;
+    private static string TargetDir => ToolResolver.VendorDir;
 
     public static IAsyncEnumerable<string> InstallYtdlpAsync(CancellationToken ct = default) =>
         StreamAsync((log, token) => FetchExeAsync(YtdlpReleaseUrl, "yt-dlp.exe", log, token), ct);

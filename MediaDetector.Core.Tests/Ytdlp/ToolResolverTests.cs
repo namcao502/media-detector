@@ -113,9 +113,9 @@ public class ToolResolverTests : IDisposable
     }
 
     [Fact]
-    public void FfmpegDirCandidates_PrefersTheAppLocalBinFolder()
+    public void FfmpegDirCandidates_PrefersTheAppLocalVendorFolder()
         => Assert.Equal(
-            Path.Combine(AppContext.BaseDirectory, "bin"),
+            Path.Combine(AppContext.BaseDirectory, "vendor"),
             ToolResolver.FfmpegDirCandidates().First());
 
     // The vendored copy has to win, or dropping node.exe into vendor/ does
@@ -124,29 +124,29 @@ public class ToolResolverTests : IDisposable
     [Fact]
     public void NodeDirCandidates_PrefersTheAppLocalBinFolder()
         => Assert.Equal(
-            Path.Combine(AppContext.BaseDirectory, "bin"),
+            Path.Combine(AppContext.BaseDirectory, "vendor"),
             ToolResolver.NodeDirCandidates().First());
 
-    // Vendored first, then the copy the Install button downloads. Both belong to
-    // the app, and they must stay distinct folders: MSBuild rewrites VendorBin on
-    // every build, so a download of the same name there would be clobbered.
+    // Vendored and downloaded tools share one folder. Keeping them apart was
+    // justified by a clobber that does not happen: PreserveNewest compares
+    // timestamps, so a fresh download outlives a build.
     [Fact]
-    public void YtdlpDirCandidates_PrefersVendoredThenTheDownloadedCopy()
+    public void EveryResolverLooksInTheSameVendorDir()
     {
-        var candidates = ToolResolver.YtdlpDirCandidates().Take(2).ToArray();
-        Assert.Equal(ToolResolver.VendorBin, candidates[0]);
-        Assert.Equal(ToolResolver.DownloadedToolsDir, candidates[1]);
-        Assert.NotEqual(ToolResolver.VendorBin, ToolResolver.DownloadedToolsDir);
+        Assert.Contains(ToolResolver.VendorDir, ToolResolver.YtdlpDirCandidates());
+        Assert.Contains(ToolResolver.VendorDir, ToolResolver.NodeDirCandidates());
+        Assert.Contains(ToolResolver.VendorDir, ToolResolver.FfmpegDirCandidates());
     }
 
-    // Every tool the Install buttons fetch lands in the same folder, so the
-    // resolvers must all agree on where that is.
+    // On a writable app folder that is the only candidate; a read-only one adds
+    // the LOCALAPPDATA download target beside the shipped copy.
     [Fact]
-    public void EveryResolverLooksInTheDownloadedToolsDir()
+    public void VendorDirCandidates_AreAppLocalAndNotDuplicated()
     {
-        Assert.Contains(ToolResolver.DownloadedToolsDir, ToolResolver.YtdlpDirCandidates());
-        Assert.Contains(ToolResolver.DownloadedToolsDir, ToolResolver.NodeDirCandidates());
-        Assert.Contains(ToolResolver.DownloadedToolsDir, ToolResolver.FfmpegDirCandidates());
+        var candidates = ToolResolver.YtdlpDirCandidates().ToArray();
+        Assert.NotEmpty(candidates);
+        Assert.Equal(candidates.Length, candidates.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.All(candidates, c => Assert.EndsWith("vendor", c, StringComparison.OrdinalIgnoreCase));
     }
 
     // The whole point of the vendor-only model: a tool installed on this machine

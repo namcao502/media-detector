@@ -34,12 +34,11 @@ dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj --filter "F
 
 ## Runtime dependencies (external, checked at runtime, not NuGet)
 
-**Vendor-only.** The resolvers look at exactly two folders, both owned by the app:
+**Vendor-only, one folder.** Every tool lives in `<app>/vendor` (`ToolResolver.VendorDir`), whether it was shipped there by MSBuild from the repo's `vendor/*.exe` or downloaded by an Install button. PATH, winget and Chocolatey are **not** consulted.
 
-- `<app>/bin` -- what `MediaDetector.App.csproj` copies `vendor/*.exe` into at build time (`ToolResolver.VendorBin`)
-- `<app>/data/tools` -- what the Install buttons download into (`ToolResolver.DownloadedToolsDir`)
+An earlier revision kept the shipped and downloaded copies in separate folders, on the theory that `CopyToOutputDirectory="PreserveNewest"` would clobber a download on the next build. **That is wrong, and it was measured**: PreserveNewest compares timestamps, so a file downloaded after the build survives it, and only a deliberately updated `vendor/` copy wins. One folder is correct.
 
-PATH, winget and Chocolatey are **not** consulted. The two folders must stay distinct and the second is deliberately not called `bin`: MSBuild rewrites `VendorBin` on every build, so a downloaded copy of the same filename there would be clobbered on the next build and restored on the next Install, flip-flopping silently.
+The only split left is the read-only case: `AppPaths.AppLocalOrFallback` sends *writes* to `%LOCALAPPDATA%\MediaDetector\vendor` when the app folder cannot be written (an install under Program Files), while `<app>/vendor` stays readable for whatever shipped there. On a writable app folder the two are the same path and `AppOwnedToolDirs` dedupes them.
 
 | Tool | Check | In-app Install downloads | Required |
 |------|-------|--------------------------|----------|
@@ -63,8 +62,8 @@ nodejs.org publishes no stable "latest LTS" URL, so `LatestLtsVersion` reads `di
 Consequences worth knowing:
 
 - `yt-dlp.exe -U` is now the update path and it works. The old comment saying `-U` refuses was true only of a **pip** install, which is what this used to be.
-- The Install button downloads into `ToolResolver.DownloadedToolsDir`, staged through a `.part` file so an interrupted download never leaves a truncated exe for the resolver to find. It cannot write to `vendor/`, so a stale vendored copy always wins -- update that by hand.
-- **In dev, `data/` sits inside `bin/Debug/net10.0-windows/`**, so `dotnet clean` deletes ~300 MB of downloaded tools along with the build output. In a published folder `data/` is a sibling of the exe and survives.
+- The Install buttons download into `ToolResolver.VendorDir`, staged through a `.part` file so an interrupted download never leaves a truncated exe for the resolver to find.
+- **In dev everything app-local sits inside `bin/Debug/net10.0-windows/`**, so `dotnet clean` deletes ~300 MB of downloaded tools along with the build output. In a published folder they are siblings of the exe and survive.
 - **Python is still a dev dependency of the test suite.** `RunAsync_RoundTripsNonAsciiChildOutput` and `StreamAsync_RoundTripsNonAsciiChildOutput` need a real Python to reproduce the mangling they guard against, and `yt-dlp.exe` cannot run an arbitrary `-c` script. `NonAscii.ResolvePythonAsync` fails loudly rather than skipping.
 - **`PYTHONIOENCODING=utf-8` in `ProcessRunner.NewPsi` is still load-bearing.** `yt-dlp.exe` is that same Python frozen by PyInstaller and reads it identically. Removing it brings the `h?i kch` mangling straight back.
 - PyInstaller unpacks to temp on every launch (~1-2s), and a playlist spawns one process per track. Defender also flags PyInstaller binaries more readily than a pip install.
@@ -81,7 +80,7 @@ A green row has to mean "this copy of the app carries what it needs", and a PATH
 
 Consequences to keep in mind:
 
-- `YtdlpExeOrDefault` falls back to `<app>/bin/yt-dlp.exe`, **not** to a bare `"yt-dlp.exe"` -- a bare name resolves through PATH at spawn time and would put the system install straight back.
+- `YtdlpExeOrDefault` falls back to `<app>/vendor/yt-dlp.exe`, **not** to a bare `"yt-dlp.exe"` -- a bare name resolves through PATH at spawn time and would put the system install straight back.
 - `ProbeFfmpegAsync` returns not-found rather than running a bare `ffmpeg`.
 - `DependencyRows` stays pure and never touches `ToolResolver`; the concrete folder to copy into comes from `StatusBarViewModel.VendorHint`.
 - An empty `vendor/` means the app genuinely cannot download. That is the intended state, not a bug.
@@ -96,7 +95,17 @@ Four tests pin it, and all four were confirmed to fail when `IsExecutable` is do
 
 ### Settings, logs and downloads
 
-`AppPaths.DataRoot` is `<app>/data` when that is writable, else `%LOCALAPPDATA%\MediaDetector`. Writability is probed by actually writing a file, because UAC virtualization makes the permission bits unreliable. Settings and logs and the downloaded yt-dlp all sit under it, so a copied app folder keeps them; an install under Program Files still works via the fallback.
+`AppPaths.AppLocalOrFallback` picks one home for both `data/` and `vendor/`, in this order:
+
+1. **The repo root**, when a `*.sln` is found by walking up from `AppContext.BaseDirectory`. In development the exe lives four levels down in `bin/Debug/net10.0-windows/`, where both folders are invisible and a `dotnet clean` deletes them -- including ~300 MB of downloaded tools. At the repo root they survive, and `.gitignore` covers `/data/` and `vendor/*.exe`.
+2. **Beside the exe**, for a published app: nothing has a `.sln` above it, so it falls straight through. This is what makes the published folder copyable.
+3. **`%LOCALAPPDATA%\MediaDetector`**, when the app folder cannot be written -- an install under Program Files. Writability is probed by actually writing a file, because UAC virtualization makes the permission bits unreliable.
+
+Steps 1 and 3 are both probed **once** and shared, so `data/` and `vendor/` can never disagree about which home they are in.
+
+Running the **tests** also lands in step 1, so `dotnet test` writes logs to the repo's `data/logs`. That is intended -- it is the same path the app takes.
+
+Settings and logs live under `data/`; tools are a sibling `vendor/`, deliberately not inside it. "Delete the tools and let them re-download" must not be a way to lose your settings.
 
 `AppSettings.Load` reads `AppPaths.LegacyRoot` when the app-local file does not exist, so the move does not read as a factory reset. Saves always target `DataRoot`, which completes the migration. Logs are not migrated -- they are disposable by design.
 

@@ -26,13 +26,11 @@
   </ItemGroup>
 
   <!-- Makes the vendoring path real: ToolResolver probes
-       AppContext.BaseDirectory\bin, which is the OUTPUT dir, not the repo root.
-       Without this copy an ffmpeg.exe dropped in the repo's vendor/ is never
-       found. LinkBase stays "bin", naming the subfolder inside the BUILD
-       OUTPUT that ToolResolver probes, unrelated to this source folder's own
-       name. -->
+       AppContext.BaseDirectory\vendor, the OUTPUT dir, not the repo root. The
+       Install buttons download into that same folder; PreserveNewest compares
+       timestamps, so a build never clobbers a fresher download. -->
   <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\..\vendor')">
-    <None Include="..\vendor\*.exe" LinkBase="bin" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\vendor\*.exe" LinkBase="vendor" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

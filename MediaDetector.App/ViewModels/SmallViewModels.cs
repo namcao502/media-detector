@@ -144,7 +144,7 @@ public sealed partial class StatusBarViewModel(StatusService service) : Observab
     // "Put it in vendor/" is useless without the real path, and the folder does
     // not exist until something is vendored -- so it is shown, and the button
     // creates it.
-    public string VendorHint => $"Copy into: {ToolResolver.VendorBin}";
+    public string VendorHint => $"Copy into: {ToolResolver.VendorDir}";
 
     [ObservableProperty] private string? _vendorError;
 
@@ -170,15 +170,15 @@ public sealed partial class StatusBarViewModel(StatusService service) : Observab
     {
         try
         {
-            Directory.CreateDirectory(ToolResolver.VendorBin);
+            Directory.CreateDirectory(ToolResolver.VendorDir);
         }
         catch (Exception ex)
         {
-            VendorError = $"Could not create {ToolResolver.VendorBin}: {ex.Message}";
+            VendorError = $"Could not create {ToolResolver.VendorDir}: {ex.Message}";
             return;
         }
 
-        VendorError = OutputPaths.OpenInExplorer(ToolResolver.VendorBin);
+        VendorError = OutputPaths.OpenInExplorer(ToolResolver.VendorDir);
     }
 
     public async Task LoadAsync(bool refresh = false)

@@ -35,21 +35,22 @@ public static class ToolResolver
     public static string? FirstDirWith(IEnumerable<string> dirs, params string[] exeNames) =>
         dirs.FirstOrDefault(d => exeNames.All(exe => IsExecutable(Path.Combine(d, exe))));
 
+    // One folder for every tool, vendored or downloaded. MSBuild copies
+    // vendor/*.exe here and the Install buttons write here too: PreserveNewest
+    // compares timestamps, so a fresh download is never clobbered by a build, and
+    // a deliberately updated vendor/ copy does win. Verified both directions.
+    //
     // BaseDirectory, not the working directory, which breaks once published.
-    public static string VendorBin => Path.Combine(AppContext.BaseDirectory, "bin");
+    public static string VendorDir => Storage.AppPaths.AppLocalOrFallback("vendor");
 
-    // Not called `bin`: MSBuild rewrites VendorBin on every build and would
-    // clobber a downloaded copy of the same name, so the two must stay separate.
-    public static string DownloadedToolsDir =>
-        Path.Combine(Storage.AppPaths.DataRoot, "tools");
+    // The shipped copy stays readable even when the app folder is not writable
+    // (an install under Program Files), where VendorDir points at LOCALAPPDATA.
+    private static string ShippedVendorDir => Path.Combine(AppContext.BaseDirectory, "vendor");
 
     // App-local only -- PATH, winget and Chocolatey were removed on purpose: a
     // system install made a row go green for an app that could not carry it.
-    private static IEnumerable<string> AppOwnedToolDirs()
-    {
-        yield return VendorBin;
-        yield return DownloadedToolsDir;
-    }
+    private static IEnumerable<string> AppOwnedToolDirs() =>
+        new[] { ShippedVendorDir, VendorDir }.Distinct(StringComparer.OrdinalIgnoreCase);
 
     public static IEnumerable<string> FfmpegDirCandidates() => AppOwnedToolDirs();
 
@@ -67,15 +68,7 @@ public static class ToolResolver
         return dir == null ? [] : ["--ffmpeg-location", dir];
     }
 
-    // Where builds before the app went portable downloaded yt-dlp. Read-only
-    // candidate, so an upgrade does not force a second download of the same exe.
-    private static string LegacyToolsDir =>
-        Path.Combine(Storage.AppPaths.LegacyRoot, "bin");
-
-    // Vendored, then downloaded, then the pre-portable location. All three belong
-    // to the app; PATH is deliberately absent.
-    public static IEnumerable<string> YtdlpDirCandidates() =>
-        [.. AppOwnedToolDirs(), LegacyToolsDir];
+    public static IEnumerable<string> YtdlpDirCandidates() => AppOwnedToolDirs();
 
     public static string? ResolveYtdlpExe()
     {
@@ -87,7 +80,7 @@ public static class ToolResolver
     // resolves through PATH at spawn time and would quietly reintroduce the
     // system install this model exists to exclude.
     public static string YtdlpExeOrDefault() =>
-        ResolveYtdlpExe() ?? Path.Combine(VendorBin, "yt-dlp.exe");
+        ResolveYtdlpExe() ?? Path.Combine(VendorDir, "yt-dlp.exe");
 
     // yt-dlp needs an ABSOLUTE path for --js-runtimes, so a bare "node" would not
     // do even if PATH were still consulted.
