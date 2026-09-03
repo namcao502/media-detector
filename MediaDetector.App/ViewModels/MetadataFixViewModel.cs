@@ -2,18 +2,14 @@ using System.IO;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using MediaDetector.Core.Dependencies;
 using MediaDetector.Core.Ytdlp;
 using Microsoft.Win32;
 
 namespace MediaDetector.App.ViewModels;
 
-// Fixes the embedded title/artist tag on a file that is already on disk --
-// covers the gap MetadataOverrideFor leaves on purpose: a raw-mode download
-// (CleanNames off, no custom name) never gets the automatic tag correction,
-// because its filename already matches yt-dlp's default embed. This reads the
-// file's CURRENT tag to prefill an edit box rather than requiring the original
-// YouTube URL again.
+// Covers the gap MetadataOverrideFor leaves on purpose: a raw-mode download never
+// gets the automatic tag correction. Prefills from the file's CURRENT tag, so the
+// original YouTube URL is not needed again.
 public sealed partial class MetadataFixViewModel : ObservableObject
 {
     [ObservableProperty] private string? _filePath;
@@ -61,8 +57,7 @@ public sealed partial class MetadataFixViewModel : ObservableObject
         IsBusy = true;
         try
         {
-            var python = await DependencyChecker.ResolvePythonAsync();
-            var tags = await MetadataTagger.ReadTagsAsync(python, FilePath);
+            var tags = await MetadataTagger.ReadTagsAsync(FilePath);
             Title = tags?.Title ?? "";
             Artist = tags?.Artist ?? "";
         }
@@ -83,9 +78,8 @@ public sealed partial class MetadataFixViewModel : ObservableObject
         IsBusy = true;
         try
         {
-            var python = await DependencyChecker.ResolvePythonAsync();
             var ok = await MetadataTagger.TryWriteTagsAsync(
-                python, FilePath, Title.Trim(), Artist.Trim(), CancellationToken.None);
+                FilePath, (Title.Trim(), Artist.Trim()));
             Status = ok ? "Saved." : "Could not write metadata for this file.";
             StatusIsError = !ok;
         }
@@ -95,10 +89,8 @@ public sealed partial class MetadataFixViewModel : ObservableObject
         }
     }
 
-    // Bulk repair for downloads made before the PYTHONIOENCODING fix, whose tag
-    // write silently failed on any non-ASCII path. Deliberately NOT recursive:
-    // pointed at a music library root this would run CleanTitle over unrelated
-    // files, so it stays scoped to the one folder the user picks.
+    // Deliberately NOT recursive: pointed at a music library root this would run
+    // CleanTitle over unrelated files.
     [RelayCommand]
     private async Task FixFolder()
     {
@@ -118,9 +110,14 @@ public sealed partial class MetadataFixViewModel : ObservableObject
 
         // Rewriting tags in bulk is not undoable, so the count and the folder are
         // confirmed before anything is written.
+        var covers = paths.Count(p => MetadataBackfill.CoverFor(p) != null);
         var confirmed = MessageBox.Show(
             $"Rewrite the embedded title and artist on {paths.Count} file(s) in\n"
             + $"{dialog.FolderName}?\n\n"
+            + (covers != 0
+                ? $"{covers} of them have a leftover .jpg beside them. Those images will be\n"
+                  + "embedded as cover art and then deleted.\n\n"
+                : "")
             + "Files whose tag is already correct are left untouched.",
             "Fix metadata in folder",
             MessageBoxButton.OKCancel,
@@ -134,7 +131,6 @@ public sealed partial class MetadataFixViewModel : ObservableObject
         FolderStatusIsError = false;
         try
         {
-            var python = await DependencyChecker.ResolvePythonAsync();
             var done = 0;
             var progress = new Progress<string>(_ =>
             {
@@ -142,9 +138,10 @@ public sealed partial class MetadataFixViewModel : ObservableObject
                 FolderStatus = $"Repairing {done} of {paths.Count}...";
             });
 
-            var report = await MetadataBackfill.RunAsync(python, paths, progress);
+            var report = await MetadataBackfill.RunAsync(paths, progress);
             FolderStatus =
                 $"Updated {report.Updated}, already correct {report.AlreadyCorrect}"
+                + (report.CoversEmbedded != 0 ? $", cover art {report.CoversEmbedded}" : "")
                 + (report.Failed != 0 ? $", failed {report.Failed}" : "")
                 + $" of {report.Scanned}.";
             FolderStatusIsError = report.Failed != 0;

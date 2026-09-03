@@ -23,16 +23,9 @@ public static class OutputPaths
         return dir;
     }
 
-    // Replaces app/api/open-folder. The macOS `open` branch is gone.
-    //
-    // Deliberately NOT routed through ProcessRunner: that creates a Job Object
-    // with KILL_ON_JOB_CLOSE and disposes it on return, which would kill the
-    // Explorer window we just opened. It is a launcher, not a run-and-wait.
-    // Note also that explorer.exe returns exit code 1 even on success, so no
-    // caller may branch on its exit code.
-    //
-    // Returns an error message, or null on success -- callers must surface it
-    // rather than discarding it.
+    // NOT through ProcessRunner: its Job Object would kill the Explorer window on
+    // return. explorer.exe also returns exit code 1 on success, so no caller may
+    // branch on it. Returns an error message, or null -- surface it, don't discard.
     public static string? OpenInExplorer(string folderPath)
     {
         if (string.IsNullOrWhiteSpace(folderPath)) return "No folder to open";

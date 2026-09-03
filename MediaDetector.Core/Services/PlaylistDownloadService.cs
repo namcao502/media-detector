@@ -73,7 +73,7 @@ public sealed class PlaylistDownloadService(DetectService detect)
             "playlist",
             $"{entries.Count} tracks, {req.Selection.Mode}, {concurrency} at once -> {folder}");
 
-        var python = await DependencyChecker.ResolvePythonAsync(ct);
+        var ytdlpExe = ToolResolver.YtdlpExeOrDefault();
         var nodeExe = ToolResolver.ResolveNodeExe();
 
         async Task<TrackOutcome> Download(
@@ -89,7 +89,7 @@ public sealed class PlaylistDownloadService(DetectService detect)
                 ? FileNaming.DownloadStem(source)
                 : FileNaming.RawStem(source);
 
-            var args = YtdlpArgs.Ytdlp(python, nodeExe,
+            var args = YtdlpArgs.Ytdlp(ytdlpExe, nodeExe,
             [
                 .. formatArgs, "--no-playlist", videoUrl,
                 "-o", FileNaming.OutputTemplateFor(Path.Combine(folder, stem)),
@@ -116,12 +116,12 @@ public sealed class PlaylistDownloadService(DetectService detect)
 
             if (result.Code == 0)
             {
+                // Unconditional, same as DownloadService: the cover art has no
+                // other writer now, and the fetched .jpg must not be left behind.
+                var coverPath = DownloadTranslator.CoverPathFor(result.SavedPath);
                 var tags = FileNaming.MetadataOverrideFor(source, req.CleanNames, customTitle: null);
-                if (tags != null)
-                {
-                    await MetadataTagger.TryWriteTagsAsync(
-                        python, result.SavedPath, tags.Value.Title, tags.Value.Artist, innerCt);
-                }
+                await MetadataTagger.TryWriteTagsAsync(result.SavedPath, tags, coverPath);
+                DownloadTranslator.DeleteThumbnail(coverPath);
             }
 
             return new TrackOutcome(

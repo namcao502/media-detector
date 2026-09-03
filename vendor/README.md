@@ -1,24 +1,71 @@
-# vendor/ -- optional vendored ffmpeg
+# vendor/ -- ship the tools inside the build
 
-Drop `ffmpeg.exe` and `ffprobe.exe` here to enable metadata and cover-art
-embedding without a system-wide install.
+This folder is a **build-time** drop point, not a runtime one.
+`MediaDetector.App.csproj` copies `vendor/*.exe` into a `bin/` subfolder next to
+the built executable, and that copy is what `ToolResolver` reads.
 
-`MediaDetector.App.csproj` copies `vendor/*.exe` into a `bin/` subfolder next
-to the built executable, and `ToolResolver.ResolveFfmpegDir()` probes that
-copy first, then winget's and Chocolatey's shim directories. When it finds one
-it passes `--ffmpeg-location <dir>` to yt-dlp; otherwise yt-dlp uses whatever
-is on PATH.
+## You usually do not need this
 
-You need **both** binaries -- `ffprobe` is required to embed cover art.
+The app's **Install** buttons download the same binaries into
+`<app>/data/tools` at runtime. On a machine with internet that is all you need,
+and this folder can stay empty.
 
-Get a build from https://ffmpeg.org/download.html (the Gyan "essentials" or
-"full" build includes both exes). The in-app **Install** button on the ffmpeg
-row does this for you via winget or Chocolatey, so vendoring here is only for
-keeping the app self-contained or working offline.
+Fill it when you want the published folder to already contain everything:
 
-Without ffmpeg the app still downloads; it just cannot merge video+audio,
-convert to MP3, or embed metadata and cover art.
+- the target PC has no internet, or a proxy blocks GitHub / nodejs.org / gyan.dev
+- you are handing someone a zip that must work with no buttons pressed
+- you want to pin exact versions rather than take whatever is current
 
-The binaries are gitignored (they are large, ~100 MB). To commit them anyway,
-add a `!vendor/ffmpeg.exe` style exception in `.gitignore` -- but note that
-bloats the history permanently.
+## Where things end up
+
+| Folder | Filled by | Wins? |
+|---|---|---|
+| `<app>/bin` | MSBuild, from this folder | Yes |
+| `<app>/data/tools` | the Install buttons | Only if `bin` has nothing |
+
+They are separate on purpose. MSBuild rewrites `<app>/bin` on every build, so a
+downloaded file of the same name placed there would be clobbered by the next
+build and restored by the next Install, flip-flopping with no way to tell which
+copy is live.
+
+PATH, winget and Chocolatey are deliberately not consulted: a tool installed on
+the build machine does not travel with the app, so counting it would make a
+green status row mean something weaker than "this copy is portable".
+
+| File | Required | Where to get it |
+|------|----------|-----------------|
+| `yt-dlp.exe` | Yes | https://github.com/yt-dlp/yt-dlp/releases/latest |
+| `node.exe` | Yes | https://nodejs.org/en/download -- take the **zip**, not the installer; `node.exe` inside it runs standalone |
+| `ffmpeg.exe` | Optional | https://www.gyan.dev/ffmpeg/builds/ (Gyan "essentials" or "full") |
+| `ffprobe.exe` | Optional | Same archive as ffmpeg |
+
+## Notes per tool
+
+**yt-dlp** is the standalone build, which bundles its own Python -- that is why
+the app has no Python dependency. Two consequences: Defender may flag it (it is
+a PyInstaller bundle), and it unpacks to temp on every launch, costing a second
+or two per spawn. A playlist spawns one per track.
+
+A vendored copy never self-updates: `yt-dlp.exe -U` usually cannot write into
+the publish folder, and the in-app Install button downloads into the app's data
+folder, which loses to this one in the resolver order. Replace it here by hand
+when YouTube breaks something.
+
+**Node** is required, not optional. yt-dlp needs a JavaScript runtime to solve
+YouTube's signature and `n` challenges; without one every format URL answers
+HTTP 403 and the only trace left on disk is a stray image file. Take `node.exe`
+out of the official zip -- it runs standalone, nothing else in that archive is
+needed.
+
+**ffmpeg needs both binaries.** `--ffmpeg-location` points yt-dlp at one
+directory, and `ResolveFfmpegDir` deliberately refuses a directory holding only
+`ffmpeg.exe` -- a half-populated folder used to win the lookup and then silently
+drop the cover art behind a green status row. Without ffmpeg the app still
+downloads; it just cannot merge video+audio, convert to MP3, or embed metadata,
+chapters and cover art.
+
+## Do not commit these
+
+The binaries are gitignored (`vendor/*.exe`) and total roughly 270 MB. Adding a
+`!vendor/ffmpeg.exe` style exception would bloat the history permanently and is
+not recoverable.

@@ -20,36 +20,24 @@ public sealed record DownloadRequest(
     bool CleanNames,
     string? CustomName);
 
-// Replaces app/api/download/route.ts. Everything the route did survives except
-// the streaming protocol: no ReadableStream, no TextEncoder, no NDJSON, no
-// dual-source AbortController -- one CancellationToken covers what req.signal
-// plus the stream cancel() callback covered together.
 [SupportedOSPlatform("windows")]
 public sealed class DownloadService
 {
-    // The override/clean/raw precedence lives here ONLY. Computing it in two
-    // places (arg building and the final DoneLine) is how the preview and the
-    // real filename drift apart.
+    // The override/clean/raw precedence lives here ONLY -- computing it twice is
+    // how the preview and the real filename drift apart.
     public static string StemFor(DownloadRequest req) =>
-        // A typed name wins over the rules, once sanitised -- it is untrusted
-        // input being pasted into an absolute path.
+        // Sanitised: a typed name is untrusted input pasted into an absolute path.
         FileNaming.SanitizeUserStem(req.CustomName)
         ?? (req.CleanNames
             ? FileNaming.DownloadStem(req.Source)
             : FileNaming.RawStem(req.Source));
 
-    // The name is decided HERE and handed to yt-dlp as a literal -o path, not as
-    // a template. yt-dlp decides a file is "already downloaded" by comparing
-    // against the name its -o produces, so a literal name is stable across runs
-    // and a repeat download still skips what it has. The UI preview and the real
-    // filename also come from one function, so they cannot drift.
-    //
-    // Every environment-dependent value is a parameter, so this is pure and its
-    // tests do not read the real machine's winget dirs or ~/Documents.
-    // `outputDir` must already be resolved by the caller.
+    // A literal -o path, not a template: yt-dlp decides "already downloaded" by
+    // comparing against what -o produces, so a stable name is what lets a repeat
+    // run skip what it has. Every environment value is a parameter, keeping this pure.
     public static string[] BuildArgs(
         DownloadRequest req,
-        string python,
+        string ytdlpExe,
         string? nodeExe,
         bool hasFfmpeg,
         string outputDir,
@@ -57,7 +45,7 @@ public sealed class DownloadService
     {
         var output = FileNaming.OutputTemplateFor(Path.Combine(outputDir, StemFor(req)));
 
-        return YtdlpArgs.Ytdlp(python, nodeExe,
+        return YtdlpArgs.Ytdlp(ytdlpExe, nodeExe,
         [
             "-f", req.FormatId, req.Url, "-o", output, "--no-playlist",
             .. YtdlpArgs.ProgressTemplate(),
@@ -78,10 +66,9 @@ public sealed class DownloadService
 
         var dir = OutputPaths.EnsureCreated(req.OutputDir);
         var hasFfmpeg = (await DependencyChecker.ProbeFfmpegAsync()).Found;
-        var python = await DependencyChecker.ResolvePythonAsync(ct);
         var args = BuildArgs(
             req,
-            python,
+            ToolResolver.YtdlpExeOrDefault(),
             ToolResolver.ResolveNodeExe(),
             hasFfmpeg,
             dir,
@@ -120,11 +107,13 @@ public sealed class DownloadService
         // used verbatim. Same StemFor as BuildArgs -- one source of truth.
         var savedPath = result.SavedPath ?? Path.Combine(dir, $"{StemFor(req)}.{req.Ext}");
 
+        // EVERY successful download, not only when there is a title to correct:
+        // nothing else embeds the cover art, and the .jpg must be cleaned up
+        // either way. A null `tags` is raw mode -- picture only.
+        var coverPath = DownloadTranslator.CoverPathFor(savedPath);
         var tags = FileNaming.MetadataOverrideFor(req.Source, req.CleanNames, req.CustomName);
-        if (tags != null)
-        {
-            await MetadataTagger.TryWriteTagsAsync(python, savedPath, tags.Value.Title, tags.Value.Artist, ct);
-        }
+        await MetadataTagger.TryWriteTagsAsync(savedPath, tags, coverPath);
+        DownloadTranslator.DeleteThumbnail(coverPath);
 
         yield return new DoneLine(savedPath);
     }

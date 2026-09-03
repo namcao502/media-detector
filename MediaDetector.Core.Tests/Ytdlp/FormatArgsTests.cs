@@ -57,7 +57,7 @@ public class FormatArgsTests
             new PlaylistFormatSelection(PlaylistMode.Audio, PlaylistAudioFormat.Best), true);
         Assert.Equal("bestaudio/best", Selector(args));
         Assert.Equal("webm", ext);
-        Assert.DoesNotContain("--embed-thumbnail", FormatArgs.Metadata(true, ext));
+        Assert.DoesNotContain("--write-thumbnail", FormatArgs.Metadata(true, ext));
     }
 
     [Theory]
@@ -91,21 +91,30 @@ public class FormatArgsTests
         var args = FormatArgs.Metadata(true, "webm");
         Assert.Contains("--embed-metadata", args);
         Assert.Contains("--embed-chapters", args);
-        // webm cannot hold a thumbnail -- passing it makes yt-dlp error.
-        Assert.DoesNotContain("--embed-thumbnail", args);
+        // webm holds no picture we could write, so do not even fetch one --
+        // otherwise the .jpg is downloaded and immediately thrown away.
+        Assert.DoesNotContain("--write-thumbnail", args);
     }
 
+    // Fetched and normalised to jpg, never embedded by yt-dlp: its own embed
+    // step needs mutagen for mp4/m4a, and dropping mutagen is what let Python go.
+    // MetadataTagger writes the picture in afterwards.
     [Theory]
     [InlineData("m4a")]
     [InlineData("mp4")]
     [InlineData("mp3")]
-    public void Metadata_EmbedsThumbnailForCapableContainers(string ext)
-        => Assert.Contains("--embed-thumbnail", FormatArgs.Metadata(true, ext));
+    public void Metadata_FetchesThumbnailAsJpgForCapableContainers(string ext)
+    {
+        var args = FormatArgs.Metadata(true, ext);
+        Assert.Contains("--write-thumbnail", args);
+        Assert.Equal("jpg", args[Array.IndexOf(args, "--convert-thumbnails") + 1]);
+        Assert.DoesNotContain("--embed-thumbnail", args);
+    }
 
     // Omitting ext means "unknown container" -> request the thumbnail.
     [Fact]
-    public void Metadata_EmbedsThumbnailWhenExtUnknown()
-        => Assert.Contains("--embed-thumbnail", FormatArgs.Metadata(true, null));
+    public void Metadata_FetchesThumbnailWhenExtUnknown()
+        => Assert.Contains("--write-thumbnail", FormatArgs.Metadata(true, null));
 
     [Theory]
     [InlineData("Normal Name", "Normal Name")]

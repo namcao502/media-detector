@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MediaDetector.App.Controls;
@@ -7,6 +9,7 @@ using MediaDetector.Core.Dependencies;
 using MediaDetector.Core.Models;
 using MediaDetector.Core.Naming;
 using MediaDetector.Core.Storage;
+using MediaDetector.Core.Ytdlp;
 using Microsoft.Win32;
 
 namespace MediaDetector.App.ViewModels;
@@ -136,13 +139,50 @@ public sealed partial class StatusBarViewModel(StatusService service) : Observab
     public bool IsOpen => !Healthy || IsExpanded;
     public bool Healthy { get; private set; }
     public bool DepsReady =>
-        Current?.Python.Found == true && Current?.Ytdlp.Found == true && Current?.Node.Found == true;
+        Current?.Ytdlp.Found == true && Current?.Node.Found == true;
+
+    // "Put it in vendor/" is useless without the real path, and the folder does
+    // not exist until something is vendored -- so it is shown, and the button
+    // creates it.
+    public string VendorHint => $"Copy into: {ToolResolver.VendorBin}";
+
+    [ObservableProperty] private string? _vendorError;
 
     partial void OnIsExpandedChanged(bool value) => OnPropertyChanged(nameof(IsOpen));
 
+    [RelayCommand]
+    private void OpenHelp(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return;
+        try
+        {
+            using var proc = Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            VendorError = null;
+        }
+        catch (Exception ex)
+        {
+            VendorError = $"Could not open the link: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private void OpenVendorFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(ToolResolver.VendorBin);
+        }
+        catch (Exception ex)
+        {
+            VendorError = $"Could not create {ToolResolver.VendorBin}: {ex.Message}";
+            return;
+        }
+
+        VendorError = OutputPaths.OpenInExplorer(ToolResolver.VendorBin);
+    }
+
     public async Task LoadAsync(bool refresh = false)
     {
-        if (refresh) DependencyChecker.ResetPythonCache();
         IsBusy = true;
         try
         {
@@ -184,11 +224,10 @@ public sealed partial class StatusBarViewModel(StatusService service) : Observab
         LogLines.Clear();
         try
         {
-            var python = await DependencyChecker.ResolvePythonAsync();
             var stream = row.Action switch
             {
-                RowAction.InstallYtdlp => Installer.InstallYtdlpAsync(python),
-                RowAction.RetryYtdlpUpdate => Installer.UpdateYtdlpAsync(python),
+                RowAction.InstallYtdlp => Installer.InstallYtdlpAsync(),
+                RowAction.RetryYtdlpUpdate => Installer.UpdateYtdlpAsync(),
                 RowAction.InstallNode => Installer.InstallNodeAsync(),
                 RowAction.InstallFfmpeg => Installer.InstallFfmpegAsync(),
                 _ => null,

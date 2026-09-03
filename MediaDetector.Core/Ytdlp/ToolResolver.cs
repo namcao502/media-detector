@@ -5,79 +5,93 @@ namespace MediaDetector.Core.Ytdlp;
 [SupportedOSPlatform("windows")]
 public static class ToolResolver
 {
-    // Pure and testable: which of these dirs holds ALL of the executables.
-    public static string? FirstDirWith(IEnumerable<string> dirs, params string[] exeNames) =>
-        dirs.FirstOrDefault(d => exeNames.All(exe => File.Exists(Path.Combine(d, exe))));
+    // Smaller than any real PE this app looks for; the pip-installed yt-dlp shim,
+    // the smallest of them, is still ~100 KB.
+    private const int MinExecutableBytes = 1024;
 
-    // winget installs the Gyan.FFmpeg archive package under
-    // Packages/<pkg>/<ffmpeg-ver>/bin/ (nested, versioned) with no Links shim or
-    // PATH entry, so that bin dir has to be discovered.
-    private static IEnumerable<string> WingetFfmpegBinDirs()
+    // File.Exists is not enough: a placeholder or a half-finished download passes
+    // it and then wins the lookup, because the vendored folder is probed first.
+    public static bool IsExecutable(string path)
     {
-        var local = Environment.GetEnvironmentVariable("LOCALAPPDATA");
-        if (string.IsNullOrEmpty(local)) yield break;
-        var root = Path.Combine(local, "Microsoft", "WinGet", "Packages");
-        if (!Directory.Exists(root)) yield break;
-
-        foreach (var pkg in Directory.EnumerateDirectories(root))
+        try
         {
-            if (!Path.GetFileName(pkg).Contains("ffmpeg", StringComparison.OrdinalIgnoreCase))
-                continue;
-            foreach (var sub in Directory.EnumerateDirectories(pkg))
-                yield return Path.Combine(sub, "bin");
+            using var stream = File.OpenRead(path);
+            if (stream.Length < MinExecutableBytes)
+            {
+                return false;
+            }
+
+            return stream.ReadByte() == 'M' && stream.ReadByte() == 'Z';
+        }
+        catch
+        {
+            // Missing, locked, or unreadable -- unusable either way.
+            return false;
         }
     }
 
-    // Priority order: app-local bin/, winget's shim dir, Chocolatey's shim dir,
-    // then winget's extracted package dirs. Checking these lets a fresh install
-    // be picked up without restarting the app, whose PATH snapshot is stale.
-    //
-    // NOTE: AppContext.BaseDirectory, not the working directory. The TypeScript
-    // used process.cwd() (lib/ytdlp.ts:346), which breaks once published.
-    public static IEnumerable<string> FfmpegDirCandidates()
+    // Pure and testable: which of these dirs holds ALL of the executables, as
+    // real executables rather than merely as filenames.
+    public static string? FirstDirWith(IEnumerable<string> dirs, params string[] exeNames) =>
+        dirs.FirstOrDefault(d => exeNames.All(exe => IsExecutable(Path.Combine(d, exe))));
+
+    // BaseDirectory, not the working directory, which breaks once published.
+    public static string VendorBin => Path.Combine(AppContext.BaseDirectory, "bin");
+
+    // Not called `bin`: MSBuild rewrites VendorBin on every build and would
+    // clobber a downloaded copy of the same name, so the two must stay separate.
+    public static string DownloadedToolsDir =>
+        Path.Combine(Storage.AppPaths.DataRoot, "tools");
+
+    // App-local only -- PATH, winget and Chocolatey were removed on purpose: a
+    // system install made a row go green for an app that could not carry it.
+    private static IEnumerable<string> AppOwnedToolDirs()
     {
-        yield return Path.Combine(AppContext.BaseDirectory, "bin");
-
-        var local = Environment.GetEnvironmentVariable("LOCALAPPDATA");
-        if (!string.IsNullOrEmpty(local))
-            yield return Path.Combine(local, "Microsoft", "WinGet", "Links");
-
-        yield return @"C:\ProgramData\chocolatey\bin";
-
-        foreach (var dir in WingetFfmpegBinDirs()) yield return dir;
+        yield return VendorBin;
+        yield return DownloadedToolsDir;
     }
 
-    // Both exes, not just ffmpeg.exe: --ffmpeg-location points yt-dlp at ONE
-    // directory and its cover-art embedding runs ffprobe out of it, so a dir
-    // holding half the pair is worse than no match at all -- it used to win the
-    // race against a complete install further down the candidate list and lose
-    // the image with a green status row. Requiring both makes such a dir fall
-    // through to the next candidate, or to PATH.
+    public static IEnumerable<string> FfmpegDirCandidates() => AppOwnedToolDirs();
+
+    // Both exes: --ffmpeg-location points at ONE directory, so a dir holding half
+    // the pair is worse than no match and must fall through to the next candidate.
     public static string? ResolveFfmpegDir() =>
         FirstDirWith(FfmpegDirCandidates(), "ffmpeg.exe", "ffprobe.exe");
 
-    // Point yt-dlp at the resolved dir when found; [] otherwise (falls back to PATH).
+    // [] when nothing is vendored. yt-dlp would then fall back to PATH on its
+    // own, which we cannot prevent -- but FormatArgs.Metadata is already gated on
+    // the probe saying ffmpeg is absent, so nothing that needs it gets requested.
     public static string[] FfmpegLocationArgs()
     {
         var dir = ResolveFfmpegDir();
         return dir == null ? [] : ["--ffmpeg-location", dir];
     }
 
-    // yt-dlp needs an ABSOLUTE path for --js-runtimes, so a PATH lookup alone is
-    // not enough. winget installs Node to Program Files\nodejs.
-    public static IEnumerable<string> NodeDirCandidates()
+    // Where builds before the app went portable downloaded yt-dlp. Read-only
+    // candidate, so an upgrade does not force a second download of the same exe.
+    private static string LegacyToolsDir =>
+        Path.Combine(Storage.AppPaths.LegacyRoot, "bin");
+
+    // Vendored, then downloaded, then the pre-portable location. All three belong
+    // to the app; PATH is deliberately absent.
+    public static IEnumerable<string> YtdlpDirCandidates() =>
+        [.. AppOwnedToolDirs(), LegacyToolsDir];
+
+    public static string? ResolveYtdlpExe()
     {
-        var pathVar = Environment.GetEnvironmentVariable("PATH") ?? "";
-        foreach (var dir in pathVar.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-            yield return dir;
-
-        yield return @"C:\Program Files\nodejs";
-        yield return @"C:\Program Files (x86)\nodejs";
-
-        var local = Environment.GetEnvironmentVariable("LOCALAPPDATA");
-        if (!string.IsNullOrEmpty(local))
-            yield return Path.Combine(local, "Programs", "nodejs");
+        var dir = FirstDirWith(YtdlpDirCandidates(), "yt-dlp.exe");
+        return dir == null ? null : Path.Combine(dir, "yt-dlp.exe");
     }
+
+    // The path yt-dlp SHOULD occupy, not a bare "yt-dlp.exe" -- a bare name
+    // resolves through PATH at spawn time and would quietly reintroduce the
+    // system install this model exists to exclude.
+    public static string YtdlpExeOrDefault() =>
+        ResolveYtdlpExe() ?? Path.Combine(VendorBin, "yt-dlp.exe");
+
+    // yt-dlp needs an ABSOLUTE path for --js-runtimes, so a bare "node" would not
+    // do even if PATH were still consulted.
+    public static IEnumerable<string> NodeDirCandidates() => AppOwnedToolDirs();
 
     public static string? ResolveNodeExe()
     {

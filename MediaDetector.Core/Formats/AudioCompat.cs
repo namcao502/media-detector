@@ -4,10 +4,8 @@ namespace MediaDetector.Core.Formats;
 
 public static class AudioCompat
 {
-    // Containers iOS plays natively (Apple Music app, Files, library sync,
-    // AirPods, CarPlay). YouTube's highest-bitrate audio is Opus-in-webm, which
-    // iOS does NOT play in its stock apps -- so single downloads are steered
-    // toward these instead.
+    // Containers iOS plays natively. YouTube's highest-bitrate audio is
+    // Opus-in-webm, which its stock apps do NOT play.
     private static readonly HashSet<string> AppleNativeExts =
         new(["m4a", "mp3", "aac", "mp4"], StringComparer.OrdinalIgnoreCase);
 

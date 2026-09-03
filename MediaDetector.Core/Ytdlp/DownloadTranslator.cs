@@ -13,10 +13,8 @@ public sealed record DownloadRunResult(
     // did not reach the embed step. See RemoveStrayThumbnail.
     string? ThumbnailPath = null);
 
-// Translates raw yt-dlp output into UI lines: a progress update per template
-// line, a phase line whenever the stage changes (never repeated), and the final
-// path / exit code / error text in Result. The source sequence is injected, so
-// this is fully unit-testable without spawning anything.
+// Raw yt-dlp output into UI lines; a phase line only when the stage CHANGES.
+// The source sequence is injected, so this needs no process to test.
 public sealed class DownloadTranslator
 {
     private static readonly Regex ErrorPrefix =
@@ -42,10 +40,8 @@ public sealed class DownloadTranslator
         {
             var progress = OutputParser.ParseProgress(line);
 
-            // Log everything EXCEPT the progress spam: a 20-minute download emits
-            // hundreds of @PROG lines and they would bury the useful output. The
-            // rest -- warnings, extractor notes, and the actual error text on a
-            // failure -- is exactly what has nowhere else to go in a windowed app.
+            // Everything EXCEPT progress spam, which would bury the warnings and
+            // the actual error text -- the whole reason this log exists.
             if (progress == null)
             {
                 var level = ErrorPrefix.IsMatch(line) ? LogLevel.Error : LogLevel.Debug;
@@ -78,19 +74,31 @@ public sealed class DownloadTranslator
             thumbnailPath);
     }
 
+    // Same stem as the media because -o is a literal path. Derived, not scraped:
+    // ParseThumbnailPath names the pre-conversion .webp, already gone by now.
+    public static string? CoverPathFor(string? mediaPath) =>
+        string.IsNullOrEmpty(mediaPath) ? null : Path.ChangeExtension(mediaPath, ".jpg");
+
     // Best-effort: a thumbnail we could not delete is untidy, never fatal.
-    // Only ever the exact path yt-dlp reported -- never a glob. The resumable
-    // .part file is deliberately left alone.
-    public static void RemoveStrayThumbnail(string? thumbnailPath)
+    public static void DeleteThumbnail(string? path)
     {
-        if (string.IsNullOrEmpty(thumbnailPath)) return;
+        if (string.IsNullOrEmpty(path)) return;
         try
         {
-            File.Delete(thumbnailPath);
+            File.Delete(path);
         }
         catch
         {
             // Already gone, or locked by another process.
         }
+    }
+
+    // Failure path. Deletes the .jpg sibling too: if the convertor ran before the
+    // download died, the logged .webp is gone and the .jpg is what is orphaned.
+    public static void RemoveStrayThumbnail(string? thumbnailPath)
+    {
+        if (string.IsNullOrEmpty(thumbnailPath)) return;
+        DeleteThumbnail(thumbnailPath);
+        DeleteThumbnail(Path.ChangeExtension(thumbnailPath, ".jpg"));
     }
 }

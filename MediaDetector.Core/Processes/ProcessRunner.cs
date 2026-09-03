@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text;
 
@@ -9,16 +9,9 @@ public sealed record ExecResult(string Stdout, string Stderr, int ExitCode);
 [SupportedOSPlatform("windows")]
 public static class ProcessRunner
 {
-    // Safe for user-controlled arguments (URLs, file names): no shell is created,
-    // so metacharacters reach the target process as literal text. This is the
-    // only entry point user input may reach.
-    //
-    // CAVEAT, and it is load-bearing: this holds because args[0] is yt-dlp,
-    // python, node or ffmpeg -- none of which parse a command line as script.
-    // Passing "cmd.exe" or "powershell.exe" as args[0] re-enters a shell and
-    // voids the guarantee entirely, because ArgumentList only quotes arguments
-    // containing space, tab or quote. Never route user input through RunAsync
-    // with a shell as the target.
+    // The only entry point user input may reach: no shell, so metacharacters stay
+    // literal. That holds ONLY because args[0] is yt-dlp/node/ffmpeg -- passing a
+    // shell as args[0] re-enters one and voids the guarantee entirely.
     public static Task<ExecResult> RunAsync(
         IReadOnlyList<string> args, CancellationToken ct = default)
     {
@@ -51,13 +44,9 @@ public static class ProcessRunner
             StandardErrorEncoding = Encoding.UTF8,
         };
 
-        // We decode as UTF-8 above, but Python encodes a REDIRECTED stdout in the
-        // ANSI codepage (cp1252 here), and yt-dlp's write_string drops whatever
-        // will not fit with errors='ignore'. A Vietnamese folder name therefore
-        // came back with one char replaced and another deleted, so savedPath named
-        // a file that does not exist and every post-download tag write failed.
-        // Forcing the child to UTF-8 is what makes the two ends agree. Harmless
-        // for node/ffmpeg, which ignore it.
+        // Python encodes a REDIRECTED stdout in the ANSI codepage and drops what
+        // will not fit. Does NOT reach yt-dlp.exe, which ignores it -- see
+        // YtdlpArgs.Ytdlp's --encoding utf-8.
         psi.Environment["PYTHONIOENCODING"] = "utf-8";
         return psi;
     }

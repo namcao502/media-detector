@@ -5,23 +5,16 @@ using MediaDetector.Core.Models;
 
 namespace MediaDetector.Core.Playlist;
 
-// Downloads one track (attempt is 1-based), forwarding progress/phase lines to
-// `sink` and returning the outcome. C# cannot express the TypeScript
-// `yield*`-with-return-value pattern, so the lines and the outcome travel
-// separately.
+// Lines and outcome travel separately: C# has no `yield*`-with-return-value.
 public delegate Task<TrackOutcome> TrackDownloader(
     TrackJob track,
     int attempt,
     Func<DownloadLine, Task> sink,
     CancellationToken ct);
 
-// No CancellationToken here: RunAsync takes one [EnumeratorCancellation]
-// parameter, which is the idiomatic C# spelling and what `await foreach` wires
-// up. Carrying a second copy meant every guard had to check both, and one of
-// them would eventually be forgotten.
-//
-// Concurrency defaults to 1 so the engine's own tests stay deterministic; the
-// service passes the user's setting.
+// No token here on purpose: a second copy alongside RunAsync's
+// [EnumeratorCancellation] means every guard must check both, and one gets
+// forgotten. Concurrency defaults to 1 to keep the engine's tests deterministic.
 public sealed record OrchestrateOptions(
     int AttemptsPerPhase,
     string Folder,
@@ -29,16 +22,8 @@ public sealed record OrchestrateOptions(
     Func<TimeSpan, Task> Sleep,
     int Concurrency = 1);
 
-// Two-phase per-track retry engine. Phase 1 tries each track up to
-// AttemptsPerPhase, queueing failures so the batch continues. Phase 2 re-sweeps
-// the queued tracks up to AttemptsPerPhase more; any still failing become
-// TrackErrorLine. The downloader and sleep are injected, so this is
-// unit-testable without spawning yt-dlp.
-//
-// Up to Concurrency tracks run at once. Every worker writes into one merged
-// channel that the returned enumerator drains, which is what lets a track's
-// progress reach the UI while it is still running -- and is why the per-track
-// lines are wrapped in TrackLine on the way out.
+// Two-phase retry: phase 1 queues failures so the batch continues, phase 2
+// re-sweeps. Workers share one merged channel, hence the TrackLine wrapping.
 public static class PlaylistOrchestrator
 {
     public static async IAsyncEnumerable<DownloadLine> RunAsync(
@@ -51,14 +36,12 @@ public static class PlaylistOrchestrator
         var merged = Channel.CreateUnbounded<DownloadLine>(
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
 
-        // Abandoning the enumerator (a `break` out of `await foreach`) has to stop
-        // the workers too. Without this they would carry on spawning yt-dlp for
-        // the rest of the playlist with nobody reading the output.
+        // Breaking out of `await foreach` must stop the workers, or they keep
+        // spawning yt-dlp for the rest of the playlist with nobody reading.
         var abandoned = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
-        // No `ct` on Task.Run: if the token is already cancelled the delegate never
-        // runs, its finally never fires, the channel is never completed and the
-        // drain below deadlocks.
+        // No `ct` on Task.Run: an already-cancelled token means the delegate never
+        // runs, its finally never fires, and the drain below deadlocks.
         var driver = Task.Run(
             async () =>
             {
@@ -75,11 +58,9 @@ public static class PlaylistOrchestrator
 
         try
         {
-            // Drained WITHOUT the token. ReadAllAsync(ct) throws
-            // OperationCanceledException the instant the token trips, which escapes
-            // RunAsync and skips the final BatchDoneLine entirely -- so a cancelled
-            // playlist would report nothing at all. The driver's finally always
-            // completes the writer, so this loop still terminates promptly.
+            // Drained WITHOUT the token: it would throw the instant the token
+            // trips, skipping BatchDoneLine, so a cancelled playlist reports
+            // nothing. The driver's finally still completes the writer.
             while (await merged.Reader.WaitToReadAsync(CancellationToken.None))
             {
                 while (merged.Reader.TryRead(out var line))
@@ -88,8 +69,8 @@ public static class PlaylistOrchestrator
                 }
             }
 
-            // Surfaces anything the driver threw. A faulted task would otherwise be
-            // dropped silently and the run would look like it simply ended.
+            // A faulted driver would otherwise be dropped silently and the run
+            // would look like it simply ended.
             await driver;
         }
         finally
@@ -123,9 +104,7 @@ public static class PlaylistOrchestrator
             CancellationToken.None);
     }
 
-    // Runs one phase over `tracks` with up to opts.Concurrency workers, returning
-    // how many succeeded. Phase 1 queues failures into `failures`; phase 2 reports
-    // them as final errors.
+    // Phase 1 queues failures into `failures`; phase 2 reports them as final errors.
     private static async Task<int> RunPhaseAsync(
         IReadOnlyList<TrackJob> tracks,
         int phase,
@@ -141,9 +120,8 @@ public static class PlaylistOrchestrator
             return 0;
         }
 
-        // A shared cursor rather than a fixed partition per worker: one slow track
-        // then delays only itself, instead of leaving its worker's whole share
-        // waiting behind it.
+        // Shared cursor, not a fixed partition: one slow track then delays only
+        // itself rather than its worker's whole share.
         var cursor = -1;
         var downloaded = 0;
         var workerCount = Math.Min(Math.Max(opts.Concurrency, 1), tracks.Count);
@@ -216,12 +194,8 @@ public static class PlaylistOrchestrator
                 outcome = await download(
                     track,
                     attempt,
-                    // Written straight into the merged channel, which the enumerator
-                    // drains concurrently, so progress reaches the UI while the track
-                    // is still running rather than in one burst at the end.
                     // CancellationToken.None: an unbounded channel never blocks a
-                    // writer, so a token here buys nothing and only risks throwing
-                    // mid-write.
+                    // writer, so a token buys nothing and risks throwing mid-write.
                     line => output
                         .WriteAsync(new TrackLine(track.Index, line), CancellationToken.None)
                         .AsTask(),

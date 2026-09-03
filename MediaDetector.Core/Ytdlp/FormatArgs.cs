@@ -5,18 +5,14 @@ namespace MediaDetector.Core.Ytdlp;
 
 public static class FormatArgs
 {
-    // Always pick the source that needs the least conversion. YouTube's plain
-    // `bestaudio` is opus-in-webm, so asking for m4a without a selector made
-    // ffmpeg transcode every track: measured at 27s vs 0.4s for a 37-minute file,
-    // with no output while it ran, which looked exactly like a hang.
-    // The stereo clause matters too: plain bestaudio[ext=m4a] picks the 5.1
-    // surround AAC track where one exists (format 258, 388kbps vs 140's 129kbps),
-    // which is 3x the bytes for something headed to a phone.
+    // Asks for an AAC source so -x is a remux, not a transcode: 0.4s vs 27s on a
+    // 37-minute file, silently, which presented as a hang. The stereo clause
+    // avoids the 5.1 track (format 258 at 388kbps vs 140's 129kbps).
     private const string M4aSource =
         "bestaudio[ext=m4a][audio_channels<=2]/bestaudio[ext=m4a]/bestaudio/best";
 
-    // Containers yt-dlp can embed a cover-art thumbnail into. Notably NOT webm --
-    // passing --embed-thumbnail for webm output makes yt-dlp error in postprocessing.
+    // Containers TagLib# can write a cover-art picture into. Notably NOT webm,
+    // which has no picture frame we can fill.
     private static readonly HashSet<string> ThumbnailExts =
         new(["mp3", "mkv", "mka", "ogg", "opus", "flac", "m4a", "mp4", "m4v", "mov"],
             StringComparer.OrdinalIgnoreCase);
@@ -63,15 +59,19 @@ public static class FormatArgs
         };
     }
 
-    // yt-dlp postprocessors that embed metadata/cover art/chapters all require
-    // ffmpeg. Returns [] when ffmpeg is absent so the download still succeeds
-    // (just untagged). Text metadata + chapters embed into any container; the
-    // thumbnail is gated on `ext` (pass null for "unknown container").
+    // --write-thumbnail, not --embed-thumbnail: yt-dlp's embed step needs mutagen
+    // for mp4/m4a, so MetadataTagger writes the picture and the caller MUST then
+    // delete the .jpg. Returns [] without ffmpeg, leaving the download untagged.
     public static string[] Metadata(bool hasFfmpeg, string? ext)
     {
         if (!hasFfmpeg) return [];
         var args = new List<string> { "--embed-metadata", "--embed-chapters" };
-        if (ext == null || ThumbnailExts.Contains(ext)) args.Add("--embed-thumbnail");
+        if (ext == null || ThumbnailExts.Contains(ext))
+        {
+            args.Add("--write-thumbnail");
+            args.Add("--convert-thumbnails");
+            args.Add("jpg");
+        }
         return [.. args];
     }
 

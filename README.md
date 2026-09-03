@@ -21,14 +21,25 @@ Windows only. Built with WPF on .NET 10.
 | Tool | Required | Notes |
 |------|----------|-------|
 | .NET 10 SDK | to build | not needed to run a published build |
-| Python 3.8+ | yes | must be on PATH as `python` or `python3` |
-| yt-dlp | yes | installed from the app |
-| Node.js | yes | installed from the app; yt-dlp needs a JS runtime or YouTube returns HTTP 403 |
+| yt-dlp | yes | the standalone `yt-dlp.exe`, which bundles its own Python |
+| Node.js | yes | yt-dlp needs a JS runtime or YouTube returns HTTP 403 |
 | ffmpeg | optional | needed to merge video+audio, convert to MP3, and embed metadata/cover art. Needs `ffprobe` beside it or cover art is skipped |
-| mutagen | optional | installed with yt-dlp; without it cover art is skipped and files keep the raw YouTube title in their tag |
 
-Only Python has to be installed by hand. The app's dependency panel has an
-**Install** button for each of the others and rechecks itself afterwards.
+**The app only looks in its own folder.** All three are plain exes: drop them
+into `vendor/` (see `vendor/README.md`) and the app finds them. PATH, winget and
+Chocolatey are deliberately ignored, so a tool installed system-wide does not
+count -- a green row is meant to mean "this copy of the app can be moved
+anywhere", and consulting the machine made it mean something weaker.
+
+Each row that is missing a tool has an **Install** button that downloads it into
+the app's own folder -- yt-dlp's release exe, Node's LTS zip, gyan's ffmpeg zip,
+unpacked for you. Every row also shows the download link, the exact folder to
+copy into, and an **Open folder** button, for when the download cannot get out
+(proxy, offline) or you would rather vendor by hand.
+
+Python is not a dependency -- `yt-dlp.exe` carries its own, and tagging is done
+in process with TagLib#. The test suite still wants a Python on PATH, for two
+encoding regression tests that need one.
 
 ---
 
@@ -97,20 +108,33 @@ on the target machine on first run.
 
 ### What the target PC still needs
 
-The runtime decision above only covers .NET. The tools from the Requirements
-table are separate, and none of them are bundled:
+Nothing, if you vendor the four exes. Drop them into `vendor/` before
+publishing and they are copied into a `bin/` folder beside the published exe,
+which every resolver probes first:
 
-- **Python 3.8+** -- the only one that has to be installed by hand, and it has
-  to be on PATH as `python` or `python3`.
-- **yt-dlp, Node.js, ffmpeg** -- the app's dependency panel has an Install
-  button for each. They install per-machine, so this is once per PC, not once
-  per copy of the app.
+```
+vendor/
+  yt-dlp.exe      https://github.com/yt-dlp/yt-dlp/releases/latest
+  node.exe        https://nodejs.org/en/download  (the .zip, not the installer)
+  ffmpeg.exe      https://www.gyan.dev/ffmpeg/builds/
+  ffprobe.exe     (same archive as ffmpeg)
+```
 
-To ship ffmpeg with the app instead, drop `ffmpeg.exe` and `ffprobe.exe` into
-`vendor/` before publishing. They are copied into a `bin/` folder beside the
-published exe, which `ToolResolver` probes ahead of winget's and Chocolatey's
-directories. See `vendor/README.md`. Python, Node and yt-dlp cannot be vendored
-this way, so a fully offline target still needs those installed first.
+That is roughly 270 MB and it is gitignored on purpose -- see
+`vendor/README.md`.
+
+**Python is not required.** `yt-dlp.exe` is the standalone build and carries
+its own; nothing else in the app needs an interpreter.
+
+Without vendoring, the dependency panel has an Install button per row:
+yt-dlp downloads the release exe into `%LOCALAPPDATA%\MediaDetector\bin`, while
+Node and ffmpeg go through winget or Chocolatey and install per-machine.
+
+Two things to expect from a vendored `yt-dlp.exe`: Defender may scan or flag it
+on first run (it is a PyInstaller bundle), and it unpacks to temp on each
+launch, which costs a second or two per track on a playlist. A vendored copy
+also never self-updates -- `yt-dlp.exe -U` cannot write into the publish
+folder, so replace it by hand when YouTube breaks something.
 
 ---
 
@@ -120,8 +144,11 @@ this way, so a fully offline target still needs those installed first.
 dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj
 ```
 
-262 cases, about nine seconds. None of them spawn yt-dlp or touch the network:
+268 cases, about nine seconds. None of them spawn yt-dlp or touch the network:
 the process layer, the retry engine and the dependency probes are all injected.
+Two encoding tests do spawn a real Python, and one spawns Node to prove the
+no-shell guarantee -- those fail loudly rather than skipping, so the suite wants
+both on PATH even though the app no longer needs Python at all.
 
 ---
 

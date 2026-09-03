@@ -12,19 +12,12 @@ public sealed record LogEntry(DateTime TimestampUtc, LogLevel Level, string Cate
         + $"{Level.ToString().ToUpperInvariant(),-5} [{Category}] {Message}";
 }
 
-// The diagnostic log the desktop app needs and the web app got for free from the
-// dev-server terminal. Without it, everything yt-dlp prints that the progress
-// parser does not recognise -- which includes the real error text on a failed
-// download -- vanishes into a process with no console.
-//
-// Two sinks, deliberately:
-//   - an in-memory ring buffer the UI binds to, so the user can see what just
-//     happened without leaving the app;
-//   - a rolling file, so a failure that happened yesterday is still diagnosable.
+// A windowed app has no console, so the real error text on a failed download had
+// nowhere to go. Two sinks: a ring buffer the UI binds to, and a rolling file so
+// yesterday's failure is still diagnosable.
 public static class AppLog
 {
-    // Bounded so a 120-track playlist at ~10 lines/second cannot grow without
-    // limit over a long session.
+    // Bounded: a 120-track playlist emits ~10 lines/second.
     private const int MaxEntries = 2000;
 
     private static readonly ConcurrentQueue<LogEntry> Buffer = new();
@@ -37,9 +30,10 @@ public static class AppLog
     // Core never touches a Dispatcher.
     public static event Action<LogEntry>? Entry;
 
-    public static string LogDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "MediaDetector", "logs");
+    // Beside the exe when that is writable; AppPaths owns the fallback. Old logs
+    // are deliberately NOT migrated -- they are disposable by design (last 10
+    // runs) and copying them would only confuse the next reader.
+    public static string LogDirectory => Path.Combine(Storage.AppPaths.DataRoot, "logs");
 
     public static string? CurrentFile => _filePath;
 
@@ -79,10 +73,8 @@ public static class AppLog
                     PruneOldLogs();
                 }
 
-                // UTF-8 WITH a BOM. The content is valid UTF-8 either way, but
-                // without the BOM Notepad and PowerShell 5.1's Get-Content both
-                // fall back to the ANSI codepage and render every Vietnamese
-                // title as mojibake -- which is exactly what these logs are for.
+                // WITH a BOM: without one, Notepad and PowerShell 5.1 fall back to
+                // ANSI and render every Vietnamese title as mojibake.
                 File.AppendAllText(_filePath, entry.Format() + Environment.NewLine, Utf8Bom);
             }
         }

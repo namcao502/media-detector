@@ -7,9 +7,7 @@ namespace MediaDetector.App.Controls;
 
 public enum StatusIconKind { Check, Error, Warn, Active, Idle }
 
-// One source of status glyphs, backing the dependency rows, the finished-download
-// row and the playlist track list. Pass Label to expose it to assistive tech;
-// omit it for decoration.
+// Pass Label to expose the icon to assistive tech; omit it for decoration.
 public sealed class StatusIcon : Control
 {
     public static readonly DependencyProperty KindProperty =
@@ -33,11 +31,9 @@ public sealed class StatusIcon : Control
         set => SetValue(LabelProperty, value);
     }
 
-    // Deliberately NO DefaultStyleKeyProperty.OverrideMetadata. That opts the
-    // control into theme-dictionary lookup, which needs Themes/Generic.xaml plus
-    // an [assembly: ThemeInfo]; without them the control gets no template,
-    // measures 0x0, and OnRender draws a zero-radius circle -- every glyph
-    // invisible. This control renders itself, so it only needs a default size.
+    // Deliberately NO DefaultStyleKeyProperty.OverrideMetadata: it opts into
+    // theme-dictionary lookup, and without Generic.xaml the control measures 0x0
+    // and every glyph renders invisible. This one paints itself.
     static StatusIcon()
     {
         WidthProperty.OverrideMetadata(typeof(StatusIcon), new FrameworkPropertyMetadata(16.0));
@@ -45,9 +41,8 @@ public sealed class StatusIcon : Control
     }
 
     private static void OnLabelChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
-        // WPF has no AutomationProperties.SetAccessibilityView -- that is a WinUI
-        // API. A decorative icon is simply left unnamed; screen readers skip an
-        // unnamed, non-focusable element.
+        // No SetAccessibilityView in WPF (that is WinUI). A decorative icon is
+        // left unnamed; screen readers skip unnamed non-focusable elements.
         => AutomationProperties.SetName(d, (string?)e.NewValue ?? "");
 
     // Repaints every live icon after a theme swap; OnRender resolves brushes by
@@ -61,10 +56,8 @@ public sealed class StatusIcon : Control
             InvalidateAll(VisualTreeHelper.GetChild(root, i));
     }
 
-    // Glyph paths in the source's 16x16 viewBox (StatusIcon.tsx:42-70), scaled to
-    // the control's actual size. These are NOT decoration: without them `check`
-    // and `error` differ only by colour, which is a parity loss and fails for
-    // colour-blind users.
+    // Glyph paths in a 16x16 viewBox, scaled to the control. Not decoration:
+    // without them check and error differ only by colour.
     private static readonly Geometry CheckMark = Geometry.Parse("M4.5,8.2 L6.8,10.5 L11.5,5.6");
     private static readonly Geometry CrossMark = Geometry.Parse("M5.4,5.4 L10.6,10.6 M10.6,5.4 L5.4,10.6");
     private static readonly Geometry BangMark  = Geometry.Parse("M8,4.2 L8,8.6 M8,11.15 L8,11.25");
@@ -126,12 +119,9 @@ public sealed class StatusIcon : Control
     }
 }
 
-// iOS-style segmented control. Built on ListBox so selection, keyboard
-// navigation and binding all come for free; only the chrome is replaced.
-//
-// Deliberately NO DefaultStyleKeyProperty.OverrideMetadata -- same reason as
-// StatusIcon. Without the override it inherits ListBox's working default style,
-// and the implicit style in Controls.xaml replaces the chrome.
+// Built on ListBox so selection, keyboard nav and binding come free. No
+// DefaultStyleKeyProperty override (same reason as StatusIcon): without it the
+// control keeps ListBox's working default style and Controls.xaml swaps the chrome.
 public sealed class SegmentedControl : ListBox
 {
 }

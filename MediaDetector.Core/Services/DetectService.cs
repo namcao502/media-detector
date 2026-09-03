@@ -20,12 +20,12 @@ public sealed record Result<T>(bool Ok, T? Value, string? Error)
 [SupportedOSPlatform("windows")]
 public sealed class DetectService(
     Func<IReadOnlyList<string>, CancellationToken, Task<ExecResult>> run,
-    Func<CancellationToken, Task<string>> python,
+    Func<string> ytdlpExe,
     Func<string?> nodeExe)
 {
     public DetectService() : this(
         (args, ct) => ProcessRunner.RunAsync(args, ct),
-        DependencyChecker.ResolvePythonAsync,
+        ToolResolver.YtdlpExeOrDefault,
         ToolResolver.ResolveNodeExe)
     { }
 
@@ -39,7 +39,7 @@ public sealed class DetectService(
         if (!YouTubeUrl.IsYouTubeUrl(url))
             return Result<string>.Failure("URL must be a YouTube or YouTube Music link");
 
-        var args = YtdlpArgs.Ytdlp(await python(ct), nodeExe(), ytdlpFlags);
+        var args = YtdlpArgs.Ytdlp(ytdlpExe(), nodeExe(), ytdlpFlags);
         var result = await run(args, ct);
 
         if (result.ExitCode != 0 || string.IsNullOrEmpty(result.Stdout))

@@ -25,10 +25,8 @@ public static class DisplayFormat
             unit++;
         }
         var digits = unit != 0 && value < 100 ? 1 : 0;
-        // MidpointRounding.AwayFromZero is REQUIRED, and ToString alone is NOT
-        // toFixed-compatible: on .NET 10 (1.25).ToString("F1") is "1.2"
-        // (IEEE/banker's on exact midpoints) where JS (1.25).toFixed(1) is "1.3".
-        // Math.Round's default ToEven has the same problem.
+        // AwayFromZero is REQUIRED: (1.25).ToString("F1") is "1.2" on .NET
+        // (banker's rounding), and Math.Round's default ToEven agrees with it.
         var rounded = Math.Round(value, digits, MidpointRounding.AwayFromZero);
         return $"{rounded.ToString($"F{digits}", CultureInfo.InvariantCulture)} {SizeUnits[unit]}";
     }
@@ -49,10 +47,8 @@ public static class DisplayFormat
         return hours != 0 ? $"{hours}:{minutes:D2}:{secs:D2}" : $"{minutes}:{secs:D2}";
     }
 
-    // Containing folder of a saved file, keeping the separator style of the input
-    // (Windows backslash or POSIX slash) so the path can be handed straight back
-    // to the OS file manager. Deliberately NOT Path.GetDirectoryName, which
-    // normalises separators and would break the round-trip for a POSIX path.
+    // Keeps the input's separator style so the path goes straight back to the OS.
+    // NOT Path.GetDirectoryName, which normalises and breaks that round-trip.
     public static string ParentDir(string filePath)
     {
         var index = Math.Max(filePath.LastIndexOf('\\'), filePath.LastIndexOf('/'));

@@ -128,19 +128,44 @@
                                             <TextBlock Text="{Binding Message}" FontSize="11" TextWrapping="Wrap"
                                                        Foreground="{Binding State, Converter={StaticResource RowMessage}}"
                                                        Margin="0,2,0,0"/>
+                                            <!-- Which copy answered. Two green rows look identical
+                                                 without it. -->
+                                            <TextBlock Text="{Binding ResolvedFrom}" FontSize="10" TextWrapping="Wrap"
+                                                       Opacity="0.65" Margin="0,2,0,0"
+                                                       Foreground="{Binding State, Converter={StaticResource RowMessage}}"
+                                                       Visibility="{Binding ResolvedFrom, Converter={StaticResource ShowIfSet}}"/>
+                                            <!-- HelpUrl is only ever set on a row with a problem,
+                                                 so this doubles as the "needs vendoring" hint. -->
+                                            <TextBlock Text="{Binding DataContext.Status.VendorHint,
+                                                              RelativeSource={RelativeSource AncestorType=Window}}"
+                                                       FontSize="10" TextWrapping="Wrap"
+                                                       Opacity="0.65" Margin="0,2,0,0"
+                                                       Foreground="{Binding State, Converter={StaticResource RowMessage}}"
+                                                       Visibility="{Binding HelpUrl, Converter={StaticResource ShowIfSet}}"/>
                                         </StackPanel>
-                                        <!-- Bound to HasAction, NOT to Action: a boxed
-                                             RowAction.None is neither null nor an
-                                             empty string, so the null-check converter
-                                             put an Install button on every satisfied
-                                             row. -->
-                                        <Button Grid.Column="2" Content="{Binding ActionLabel}"
-                                                Style="{StaticResource PillPrimary}" MinWidth="80"
-                                                VerticalAlignment="Center"
-                                                Command="{Binding DataContext.Status.RunActionCommand,
-                                                          RelativeSource={RelativeSource AncestorType=Window}}"
-                                                CommandParameter="{Binding}"
-                                                Visibility="{Binding HasAction, Converter={StaticResource Show}}"/>
+                                        <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                            <!-- Bound to HasAction, NOT to Action: a boxed
+                                                 RowAction.None is neither null nor an empty
+                                                 string, so the null-check converter put an
+                                                 Install button on every satisfied row. -->
+                                            <Button Content="{Binding ActionLabel}"
+                                                    Style="{StaticResource PillPrimary}" MinWidth="90"
+                                                    Command="{Binding DataContext.Status.RunActionCommand,
+                                                              RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}"
+                                                    Visibility="{Binding HasAction, Converter={StaticResource Show}}"/>
+                                            <Button Content="Get it" Margin="0,0,0,4"
+                                                    Style="{StaticResource PillNeutral}" MinWidth="90"
+                                                    Command="{Binding DataContext.Status.OpenHelpCommand,
+                                                              RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding HelpUrl}"
+                                                    Visibility="{Binding HelpUrl, Converter={StaticResource ShowIfSet}}"/>
+                                            <Button Content="Open folder"
+                                                    Style="{StaticResource PillNeutral}" MinWidth="90"
+                                                    Command="{Binding DataContext.Status.OpenVendorFolderCommand,
+                                                              RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    Visibility="{Binding HelpUrl, Converter={StaticResource ShowIfSet}}"/>
+                                        </StackPanel>
                                     </Grid>
                                 </Border>
                             </DataTemplate>

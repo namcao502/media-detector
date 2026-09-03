@@ -114,11 +114,8 @@ public sealed partial class PlaylistPanelViewModel : StreamingViewModel
     [ObservableProperty] private PlaylistAudioFormat _audioFormat = PlaylistAudioFormat.M4a;
     [ObservableProperty] private PlaylistVideoQuality _videoQuality = PlaylistVideoQuality.Q1080;
 
-    // How many tracks download at once. Persisted, because it is a property of
-    // the machine and the connection rather than of one playlist.
-    //
-    // Clamped on read: a hand-edited settings.json holding 0 or 99 would otherwise
-    // bind to no entry at all and show an empty picker.
+    // Persisted: a property of the machine and connection, not of one playlist.
+    // Clamped on read, or a hand-edited settings.json binds to no entry at all.
     [ObservableProperty] private int _concurrency = Math.Clamp(
         App.Settings.PlaylistConcurrency, AppSettings.MinConcurrency, AppSettings.MaxConcurrency);
 
@@ -132,17 +129,9 @@ public sealed partial class PlaylistPanelViewModel : StreamingViewModel
     public bool CanUseVideo => GetFfmpegReady();
     public bool CanUseMp3 => GetFfmpegReady();
 
-    // The segmented control binds SelectedIndex to THIS, and the format pickers
-    // bind their visibility to the two bools below.
-    //
-    // Both exist because of one bug: the control was previously unbound, and the
-    // pickers read `{Binding SelectedIndex, ElementName=ModeTabs}` through
-    // BoolToVisibility. SelectedIndex is an int, so `value is bool` was never
-    // true, the converter always saw false, and the audio picker was hard-wired
-    // visible while the video one was hard-wired hidden. Worse, Mode itself never
-    // moved off Audio, so picking Video would still have downloaded audio.
-    // Routing selection through the enum makes the picker and the request the
-    // same piece of state.
+    // Routing selection through the enum keeps the picker and the request one
+    // piece of state. Binding visibility to a ListBox's int SelectedIndex instead
+    // silently pinned Mode to Audio, so picking Video still downloaded audio.
     public int ModeIndex
     {
         get
@@ -405,10 +394,8 @@ public sealed partial class PlaylistPanelViewModel : StreamingViewModel
         }
     }
 
-    // The bar counts finished tracks plus the fraction each in-flight track has
-    // covered, so it advances smoothly instead of stepping once per completion.
-    // Completed tracks are excluded from the in-flight sum by IsActive, so their
-    // 100% is never counted twice.
+    // Finished tracks plus each in-flight fraction, so the bar advances smoothly.
+    // IsActive keeps a completed track's 100% from being counted twice.
     private void RecomputeAggregate()
     {
         var inFlight = 0.0;

@@ -1,98 +1,92 @@
 using System.Runtime.Versioning;
-using System.Text.Json;
 using MediaDetector.Core.Diagnostics;
-using MediaDetector.Core.Processes;
 
 namespace MediaDetector.Core.Ytdlp;
 
-// Corrects the embedded title/artist tag after a download, independent of the
-// filename. --embed-metadata (FormatArgs.Metadata) already wrote a tag from the
-// raw YouTube title/uploader; music apps (Apple Music, Windows Music) read that
-// tag, not the filename, so renaming the file alone can never change what they
-// show -- only rewriting the tag itself does.
-//
-// Values reach Python purely through argv (ProcessRunner never uses a shell and
-// never string-interpolates into the script), so arbitrary title text -- any
-// Unicode, quotes, percent signs -- can never be misparsed as code. This is
-// deliberately not done via yt-dlp's own --parse-metadata: that mechanism
-// regex-matches an expanded output-template string, which is fragile for
-// literal title text containing regex/template metacharacters, and it only
-// runs when ffmpeg is present.
+// Music apps read the embedded tag, not the filename, so renaming a file alone
+// never changes what they show. TagLib# rather than mutagen: doing this in
+// process is what removed the last thing Python was needed for.
 [SupportedOSPlatform("windows")]
 public static class MetadataTagger
 {
-    private const string WriteScript = """
-        import sys
-        from mutagen import File
-        path, title, artist = sys.argv[1:4]
-        f = File(path, easy=True)
-        if f is None:
-            print("unsupported container", file=sys.stderr)
-            sys.exit(1)
-        f["title"] = title
-        f["artist"] = artist
-        f.save()
-        """;
-
-    // Best-effort: a failure here must never fail the download, only log. Covers
-    // a missing/incompatible mutagen and containers it cannot tag at all (webm
-    // from "Best available, no conversion"). Returns whether the tag was
-    // actually written, so a manual caller (the "Fix metadata" dialog) can show
-    // a real result instead of only the log.
-    public static async Task<bool> TryWriteTagsAsync(
-        string python, string? filePath, string title, string artist, CancellationToken ct)
+    // One open/save, not two -- writing a tag into an mp4 can shift the media
+    // data. titleArtist null means raw mode: leave title/artist alone but still
+    // write the cover art, which is the easiest part here to get wrong.
+    private static bool WriteTags(
+        string mediaPath, (string Title, string Artist)? titleArtist, string? coverImagePath)
     {
-        if (string.IsNullOrEmpty(filePath))
+        using var file = TagLib.File.Create(mediaPath);
+        var changed = false;
+
+        if (titleArtist != null)
+        {
+            file.Tag.Title = titleArtist.Value.Title;
+            file.Tag.Performers = [titleArtist.Value.Artist];
+            changed = true;
+        }
+
+        if (!string.IsNullOrEmpty(coverImagePath) && File.Exists(coverImagePath))
+        {
+            file.Tag.Pictures =
+                [new TagLib.Picture(coverImagePath) { Type = TagLib.PictureType.FrontCover }];
+            changed = true;
+        }
+
+        if (!changed)
         {
             return false;
         }
 
-        var result = await ProcessRunner.RunAsync(
-            [python, "-c", WriteScript, filePath, title, artist], ct);
-        if (result.ExitCode != 0)
-        {
-            AppLog.Warn("metadata", $"tag write failed for {Path.GetFileName(filePath)}: {result.Stderr}");
-            return false;
-        }
-
+        file.Save();
         return true;
     }
 
-    private const string ReadScript = """
-        import sys, json
-        from mutagen import File
-        f = File(sys.argv[1], easy=True)
-        title = ""
-        artist = ""
-        if f is not None and f.tags:
-            title = (f.get("title") or [""])[0]
-            artist = (f.get("artist") or [""])[0]
-        print(json.dumps({"title": title, "artist": artist}))
-        """;
-
-    // Reads the file's CURRENT title/artist tag, for prefilling an edit UI. JSON
-    // rather than plain lines: ProcessRunner trims stdout as one block, so a
-    // delimiter-based format would be ambiguous if a tag value contained a
-    // newline. Returns null for anything mutagen cannot read -- caller treats
-    // that as "nothing to prefill," not an error.
-    public static async Task<(string Title, string Artist)?> ReadTagsAsync(
-        string python, string filePath, CancellationToken ct = default)
+    // Deliberately catches everything: an unexpected exception escaping into the
+    // download's async iterator would turn a finished download into a failure.
+    public static Task<bool> TryWriteTagsAsync(
+        string? mediaPath,
+        (string Title, string Artist)? titleArtist,
+        string? coverImagePath = null)
     {
-        var result = await ProcessRunner.RunAsync([python, "-c", ReadScript, filePath], ct);
-        if (result.ExitCode != 0)
+        if (string.IsNullOrEmpty(mediaPath))
         {
-            return null;
+            return Task.FromResult(false);
         }
 
-        try
+        // Task.Run despite TagLib# being synchronous: tagging a large mp4 rewrites
+        // the file, and MetadataBackfill loops over hundreds straight off the UI.
+        return Task.Run(() =>
         {
-            var doc = JsonDocument.Parse(result.Stdout);
-            return (doc.RootElement.GetProperty("title").GetString() ?? "",
-                    doc.RootElement.GetProperty("artist").GetString() ?? "");
-        }
-        catch (JsonException)
+            try
+            {
+                return WriteTags(mediaPath, titleArtist, coverImagePath);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("metadata",
+                    $"tag write failed for {Path.GetFileName(mediaPath)}: {ex.Message}");
+                return false;
+            }
+        });
+    }
+
+    // Null means "could not read", which callers treat as nothing to prefill
+    // rather than as an error.
+    public static Task<(string Title, string Artist)?> ReadTagsAsync(string mediaPath)
+    {
+        return Task.Run<(string Title, string Artist)?>(() =>
         {
-            return null;
-        }
+            try
+            {
+                using var file = TagLib.File.Create(mediaPath);
+                return (file.Tag.Title ?? "", file.Tag.FirstPerformer ?? "");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("metadata",
+                    $"tag read failed for {Path.GetFileName(mediaPath)}: {ex.Message}");
+                return null;
+            }
+        });
     }
 }

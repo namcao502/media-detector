@@ -4,23 +4,27 @@ using MediaDetector.Core.Models;
 namespace MediaDetector.Core.Dependencies;
 
 public enum RowState { Ok, Error, Warn }
+
+// Every install downloads into a folder the app owns. The winget/Chocolatey
+// versions were removed: they install system-wide, where the resolver no longer
+// looks, so the button reported success onto a row that stayed red.
 public enum RowAction { None, InstallYtdlp, RetryYtdlpUpdate, InstallNode, InstallFfmpeg }
 
 public sealed record DependencyRow(
     string Label,
     RowState State,
     string Message,
-    // Compact form for the collapsed summary line, e.g. "Python 3.12.2".
+    // Compact form for the collapsed summary line, e.g. "yt-dlp 2026.08.01".
     string Summary,
     RowAction Action,
-    string? HelpUrl = null)
+    string? HelpUrl = null,
+    // Which folder the tool actually came from. Not named Source: WPF's Binding
+    // has one, and `{Binding Source}` beside it is a trap.
+    string? ResolvedFrom = null)
 {
-    // The view binds the button to THIS, not to Action.
-    //
-    // It used to bind Visibility straight to Action through the null-check
-    // converter, which made an Install button appear on every satisfied row:
-    // RowAction.None is a boxed enum, so it is neither null nor an empty string
-    // and the converter called it "set".
+
+    // The view binds to THIS, not to Action: a boxed RowAction.None is neither
+    // null nor empty, so the null-check converter put a button on every row.
     public bool HasAction
     {
         get
@@ -53,14 +57,9 @@ public static class DependencyRows
     private static readonly Regex LeadingVersion =
         new(@"^v?(\d+(?:\.\d+)*)", RegexOptions.CultureInvariant);
 
-    // The collapsed line is meant to be glanceable -- "name version", nothing
-    // else. ffmpeg is the one that breaks that on its own: it reports
-    // "8.1.2-full_build-www.gyan.dev", whose build tag is longer than every other
-    // entry combined. The expanded row still shows the full string, because
-    // that is where the detail belongs.
-    //
-    // Anything that does not start with a number is passed through untouched
-    // rather than mangled.
+    // ffmpeg reports "8.1.2-full_build-www.gyan.dev", whose build tag is longer
+    // than every other entry combined; the expanded row keeps the full string.
+    // Anything not starting with a number passes through untouched.
     public static string ShortVersion(string? version)
     {
         if (string.IsNullOrWhiteSpace(version))
@@ -79,20 +78,12 @@ public static class DependencyRows
 
     public static IReadOnlyList<DependencyRow> Build(StatusResult s)
     {
-        var python = s.Python.Found
-            ? new DependencyRow("Python", RowState.Ok,
-                $"Version {s.Python.Version} detected",
-                $"Python {ShortVersion(s.Python.Version)}", RowAction.None)
-            : new DependencyRow("Python", RowState.Error,
-                "Not found -- install Python 3.8+ to continue", "Python missing",
-                RowAction.None, "https://python.org/downloads");
-
         DependencyRow ytdlp;
         if (!s.Ytdlp.Found)
         {
             ytdlp = new DependencyRow("yt-dlp", RowState.Error,
-                "Not installed -- required to detect and download media", "yt-dlp missing",
-                s.Python.Found ? RowAction.InstallYtdlp : RowAction.None);
+                "Not found -- required to detect and download media", "yt-dlp missing",
+                RowAction.InstallYtdlp, "https://github.com/yt-dlp/yt-dlp/releases/latest");
         }
         else if (s.Ytdlp.UpdateStatus == UpdateStatus.Failed)
         {
@@ -114,9 +105,7 @@ public static class DependencyRows
                 $"yt-dlp {ShortVersion(s.Ytdlp.Version)}", RowAction.None);
         }
 
-        // Required: yt-dlp needs a JS runtime to solve YouTube's signature and "n"
-        // challenges. Without one every format URL answers 403 and the only thing
-        // a failed run leaves behind is a stray .webp.
+        // Required: without a JS runtime every format URL answers HTTP 403.
         var node = s.Node.Found
             ? new DependencyRow("Node.js", RowState.Ok,
                 $"Version {s.Node.Version} detected -- solves YouTube's JS challenges",
@@ -125,23 +114,22 @@ public static class DependencyRows
                 "Not found -- yt-dlp needs a JavaScript runtime or downloads fail with HTTP 403",
                 "Node missing", RowAction.InstallNode, "https://nodejs.org/en/download");
 
-        // Optional: downloads work without it, but metadata/thumbnails need it.
+        // Optional: downloads work without it, but metadata and cover art need it.
         DependencyRow ffmpeg;
         if (!s.Ffmpeg.Found)
         {
             ffmpeg = new DependencyRow("ffmpeg", RowState.Warn,
-                "Not found -- install ffmpeg to embed metadata & cover art", "ffmpeg missing",
-                RowAction.InstallFfmpeg, "https://ffmpeg.org/download.html");
+                "Not found -- needed to embed metadata & cover art",
+                "ffmpeg missing", RowAction.InstallFfmpeg, "https://www.gyan.dev/ffmpeg/builds/");
         }
         else if (!s.Ffmpeg.FfprobeFound)
         {
-            // Every real ffmpeg build ships both, so this means a hand-assembled
-            // install -- typically a vendor/ folder given only ffmpeg.exe. The
-            // row stayed green on that setup and the cover art vanished.
+            // A dir with ffmpeg.exe but no working ffprobe stayed green once and
+            // the cover art silently vanished.
             ffmpeg = new DependencyRow("ffmpeg", RowState.Warn,
                 $"Version {s.Ffmpeg.Version} detected, but ffprobe is missing -- cover art cannot be embedded",
                 $"ffmpeg {ShortVersion(s.Ffmpeg.Version)} (no ffprobe)",
-                RowAction.InstallFfmpeg, "https://ffmpeg.org/download.html");
+                RowAction.InstallFfmpeg, "https://www.gyan.dev/ffmpeg/builds/");
         }
         else
         {
@@ -150,19 +138,11 @@ public static class DependencyRows
                 $"ffmpeg {ShortVersion(s.Ffmpeg.Version)}", RowAction.None);
         }
 
-        // Optional in the same sense as ffmpeg -- the download succeeds either
-        // way. InstallYtdlp is the right action despite the name: that pip call
-        // is `install yt-dlp mutagen`, so it repairs exactly this row.
-        var mutagen = s.Mutagen.Found
-            ? new DependencyRow("mutagen", RowState.Ok,
-                $"Version {s.Mutagen.Version} detected -- cover art & tag correction available",
-                $"mutagen {ShortVersion(s.Mutagen.Version)}", RowAction.None)
-            : new DependencyRow("mutagen", RowState.Warn,
-                "Not found -- cover art and title/artist tag correction are skipped",
-                "mutagen missing",
-                s.Python.Found ? RowAction.InstallYtdlp : RowAction.None,
-                "https://pypi.org/project/mutagen");
-
-        return [python, ytdlp, node, ffmpeg, mutagen];
+        return
+        [
+            ytdlp with { ResolvedFrom = s.Ytdlp.Path },
+            node with { ResolvedFrom = s.Node.Path },
+            ffmpeg with { ResolvedFrom = s.Ffmpeg.Dir },
+        ];
     }
 }

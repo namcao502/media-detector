@@ -3,15 +3,12 @@ using System.Text.Json.Serialization;
 
 namespace MediaDetector.Core.Storage;
 
-// NOT `ThemeMode`: .NET 10 WPF added System.Windows.ThemeMode for Fluent
-// theming, and any file with `using System.Windows;` plus this namespace would
-// get CS0104 ambiguity. A using-alias would have to be repeated in every such
-// file and would not help XAML {x:Static} references at all.
+// NOT `ThemeMode`: .NET 10 WPF added System.Windows.ThemeMode, so that name
+// collides (CS0104) in any file that also has `using System.Windows;`.
 public enum AppThemeMode { System, Light, Dark }
 
-// Replaces the three localStorage hooks (theme-mode, clean-names, output dir).
-// A plain JSON file rather than ApplicationData.Current, which requires package
-// identity that an unpackaged app does not have.
+// Plain JSON, not ApplicationData.Current -- that needs package identity an
+// unpackaged app does not have.
 public sealed class AppSettings
 {
     [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -21,27 +18,27 @@ public sealed class AppSettings
 
     public string? OutputDir { get; set; }
 
-    // How many playlist tracks download at once. 1 restores the strictly
-    // sequential behaviour.
-    //
-    // 3 by default rather than "as many as possible": YouTube throttles per
-    // connection, so the first few slots are close to free, but past that the
-    // gain flattens while the costs do not -- each track's ffmpeg postprocess is
-    // CPU-bound, and more parallel requests raise the transient-failure rate the
-    // retry engine then has to absorb.
+    // 3, not "as many as possible": YouTube throttles per connection so the first
+    // few slots are near-free, then the gain flattens while ffmpeg's CPU cost and
+    // the transient-failure rate do not.
     public int PlaylistConcurrency { get; set; } = DefaultConcurrency;
 
     public const int MinConcurrency = 1;
     public const int MaxConcurrency = 8;
     public const int DefaultConcurrency = 3;
 
-    public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "MediaDetector", "settings.json");
+    // Written next to the exe when that folder is writable, so a copied app
+    // folder keeps its settings. AppPaths owns the fallback.
+    public static string DefaultPath => Path.Combine(AppPaths.DataRoot, FileName);
+
+    private const string FileName = "settings.json";
 
     public static AppSettings Load(string? path = null)
     {
-        var file = path ?? DefaultPath;
+        // Reads the legacy %LOCALAPPDATA% copy when the app-local one does not
+        // exist yet, so moving the data root does not read as a factory reset.
+        // Save always writes DefaultPath, so the first save completes the move.
+        var file = path ?? AppPaths.ExistingOrDefault(FileName);
         try
         {
             if (!File.Exists(file)) return new AppSettings();

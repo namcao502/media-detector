@@ -14,12 +14,8 @@ public sealed class BoolToVisibility : IValueConverter
 
     public object Convert(object? value, Type t, object? p, CultureInfo c)
     {
-        // Anything that is not a bool silently reads as false here, which is how
-        // the playlist format picker ended up permanently stuck on Audio: it was
-        // bound to a ListBox's int SelectedIndex, so the converter saw false for
-        // every value and the video picker never appeared. WPF swallows binding
-        // problems, so the mistake is invisible without saying something.
-        //
+        // A non-bool reads as false, which once left the playlist picker stuck on
+        // Audio for good. WPF swallows binding errors, so say something.
         // Null and UnsetValue are normal during template setup and stay quiet.
         if (value != null && value != DependencyProperty.UnsetValue && value is not bool)
         {
@@ -48,9 +44,8 @@ public sealed class NotNullToVisibility : IValueConverter
 
     public object Convert(object? value, Type t, object? p, CultureInfo c)
     {
-        // A zero count counts as absent. Without this arm the installer-log panel,
-        // bound to LogLines.Count, was permanently visible as an empty grey bar:
-        // boxed 0 is not null, so the plain null check called it "set".
+        // A zero count is absent: boxed 0 is not null, so a plain null check left
+        // the log panel showing as an empty grey bar forever.
         var present = value != null
                       && !(value is string text && text.Length == 0)
                       && !(value is int count && count == 0);
@@ -67,25 +62,13 @@ public sealed class NotNullToVisibility : IValueConverter
         => throw new NotSupportedException();
 }
 
-// Visibility (or a plain bool) -> a GridLength for the row that holds it.
-//
-// A star-sized row keeps its share of the space even when its only child is
-// Collapsed, so with the page laid out as a fixed frame the format list would
-// leave a tall empty gap on a playlist-only URL. Handing back a zero length
-// gives that space to whichever panel is actually on screen.
-//
-// Also accepts a bool (e.g. MainViewModel.HasResults) for the outer "Download"
-// row, which has to go Star whenever EITHER the format list or the playlist
-// card is showing -- a single ElementName binding to just one of them left the
-// row Auto-sized whenever the other one was active, so its content (the
-// playlist's now-star track list) had nothing bounding it and could not scroll.
+// A star row keeps its share even when its only child is Collapsed, leaving a
+// tall gap. Also accepts a bool, for the outer row that must go Star when either
+// panel is showing.
 public sealed class VisibilityToStarHeight : IValueConverter
 {
-    // What a hidden child yields. Zero collapses the row away entirely; Auto lets
-    // the row size to whatever else it holds, which is what the outer content row
-    // wants: only the format list needs to absorb slack (it scrolls), so on a
-    // playlist-only URL the row should shrink to the card rather than stretch and
-    // leave a dead gap above the log.
+    // Zero collapses the row away; Auto lets it size to whatever else it holds,
+    // which is what the outer content row wants.
     public bool AutoWhenHidden { get; set; }
 
     public object Convert(object? value, Type t, object? p, CultureInfo c)
@@ -107,10 +90,8 @@ public sealed class VisibilityToStarHeight : IValueConverter
     }
 }
 
-// Enum -> the label a person would expect. The pickers bind straight to the enum
-// values, so without this the video menu literally read "Q1080" and "Q720".
-// Applied as the ComboBox ItemTemplate, which covers both the open list and the
-// closed box (SelectionBoxItemTemplate derives from it).
+// The pickers bind straight to enum values, so without this the video menu read
+// "Q1080". Applied as the ComboBox ItemTemplate, which covers the closed box too.
 public sealed class FormatLabelConverter : IValueConverter
 {
     public object Convert(object? value, Type t, object? p, CultureInfo c)

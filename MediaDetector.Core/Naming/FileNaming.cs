@@ -222,10 +222,8 @@ public static class FileNaming
     public static string OutputTemplateFor(string literalPathWithoutExt) =>
         $"{literalPathWithoutExt.Replace("%", "%%")}.%(ext)s";
 
-    // Only worth overriding when the embedded default (yt-dlp's own
-    // --embed-metadata, which uses the raw title/uploader) would not already
-    // match. Under CleanNames off with no custom title, RawStem's filename is
-    // the raw title verbatim, so the default embed is already correct.
+    // Null when --embed-metadata's default already matches: under CleanNames off
+    // with no custom title, RawStem is the raw title verbatim.
     public static (string Title, string Artist)? MetadataOverrideFor(
         NameSource source, bool cleanNames, string? customTitle)
     {

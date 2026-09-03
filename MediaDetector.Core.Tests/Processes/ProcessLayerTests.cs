@@ -1,11 +1,9 @@
 using System.Diagnostics;
-using MediaDetector.Core.Dependencies;
 using MediaDetector.Core.Processes;
 
 namespace MediaDetector.Core.Tests.Processes;
 
-// "hai kich" with its Vietnamese diacritics. Chosen because it is what actually
-// broke: cp1252 has a byte for the a-grave but none for the i-dot-below, so a
+// cp1252 has a byte for the a-grave but none for the i-dot-below, so a
 // mis-encoded pipe mangles one character and silently deletes the other.
 internal static class NonAscii
 {
@@ -16,6 +14,26 @@ internal static class NonAscii
     public const string EchoScript =
         "import sys; sys.stdout.buffer.write("
         + "'h\\u00e0i k\\u1ecbch'.encode(sys.stdout.encoding, 'ignore') + b'\\n')";
+
+    // A test-only dependency: the app no longer needs Python, but PYTHONIOENCODING
+    // still governs every other Python child and only a real interpreter can
+    // reproduce the mangling. Fails loudly rather than passing vacuously.
+    public static async Task<string> ResolvePythonAsync()
+    {
+        foreach (var cmd in new[] { "python", "python3" })
+        {
+            if ((await ProcessRunner.RunShellAsync($"{cmd} --version")).ExitCode == 0)
+            {
+                return cmd;
+            }
+        }
+
+        Assert.Fail(
+            "Python not found. It is no longer needed to RUN the app, but this test "
+            + "guards the PYTHONIOENCODING contract and must not pass vacuously. "
+            + "Install Python to run the test suite.");
+        return "";
+    }
 }
 
 public class JobObjectTests
@@ -30,9 +48,8 @@ public class JobObjectTests
             CreateNoWindow = true,
         };
 
-        // Snapshot first: GetProcessesByName is machine-wide, so an unrelated
-        // ping running on this box would otherwise be asserted on (and waited
-        // for). Only processes this test created are in scope.
+        // GetProcessesByName is machine-wide, so snapshot first: only processes
+        // this test created are in scope.
         var before = Process.GetProcessesByName("PING").Select(p => p.Id).ToHashSet();
 
         using var proc = Process.Start(psi)!;
@@ -113,12 +130,9 @@ public class ProcessRunnerTests
         Assert.NotEmpty(result.Stderr);
     }
 
-    // Arguments reach the target process verbatim because no shell parses them.
-    // This must NOT be tested through cmd.exe: ArgumentList only quotes arguments
-    // containing space, tab or quote, so ["cmd.exe","/c","echo","a&whoami"]
-    // produces the literal command line `cmd.exe /c echo a&whoami` and cmd itself
-    // executes whoami. The real invariant is "RunAsync introduces no shell", so
-    // prove it against a process that is not one.
+    // Must NOT be tested through cmd.exe: it would parse `a&whoami` itself and
+    // execute whoami. The invariant is "RunAsync introduces no shell", so it has
+    // to be proved against a process that is not one.
     [Fact]
     public async Task RunAsync_PassesArgumentsVerbatimToANonShellProcess()
     {
@@ -145,7 +159,7 @@ public class ProcessRunnerTests
     [Fact]
     public async Task RunAsync_RoundTripsNonAsciiChildOutput()
     {
-        var python = await DependencyChecker.ResolvePythonAsync();
+        var python = await NonAscii.ResolvePythonAsync();
         var result = await ProcessRunner.RunAsync([python, "-c", NonAscii.EchoScript]);
 
         Assert.Equal(0, result.ExitCode);
@@ -178,12 +192,8 @@ public class LineStreamTests
             await Collect(LineStream.StreamAsync(["cmd.exe", "/c", "echo one& echo two"])));
 
     // Merged, not sequential: stderr must not be able to deadlock behind stdout.
-    //
-    // The assertion trims because cmd is awkward here and LineStream is not:
-    // `echo err 1>&2` emits "err " with a trailing space, and `echo err1>&2`
-    // makes cmd read "err1" as the text. LineStream deliberately does NOT trim
-    // (neither does streamCommand at lib/ytdlp.ts:112 -- yt-dlp progress parsing
-    // depends on the raw text), so the test absorbs cmd's quirk instead.
+    // The assertion trims because `echo err 1>&2` emits a trailing space --
+    // LineStream deliberately does not trim, since progress parsing needs raw text.
     [Fact]
     public async Task StreamAsync_MergesStderrIntoTheSameStream()
     {
@@ -211,7 +221,7 @@ public class LineStreamTests
     [Fact]
     public async Task StreamAsync_RoundTripsNonAsciiChildOutput()
     {
-        var python = await DependencyChecker.ResolvePythonAsync();
+        var python = await NonAscii.ResolvePythonAsync();
         var lines = await Collect(LineStream.StreamAsync([python, "-c", NonAscii.EchoScript]));
 
         Assert.Equal([NonAscii.Sample], lines);
@@ -265,6 +275,29 @@ public class TrackRunnerTests
         await Drain(runner, ["cmd.exe", "/c", "exit 7"]);
         Assert.Equal(7, runner.ExitCode);
     }
+
+    // TrackRunner used to hand-roll its own ProcessStartInfo and so never set
+    // PYTHONIOENCODING, leaving the encoding contract half-applied on the one path
+    // every download actually takes.
+    //
+    // End-to-end cover only: this goes vacuous when the shell running the suite
+    // already exports PYTHONIOENCODING, which the child then inherits regardless.
+    // NewPsi_SetsPythonIoEncoding is the assertion that cannot.
+    [Fact]
+    public async Task RunAsync_RoundTripsNonAsciiChildOutput()
+    {
+        var python = await NonAscii.ResolvePythonAsync();
+        var lines = await Drain(new TrackRunner(), [python, "-c", NonAscii.EchoScript]);
+
+        Assert.Equal([NonAscii.Sample], lines);
+    }
+
+    // Every spawn path must go through NewPsi, or it silently drops half the
+    // encoding contract -- which is exactly what TrackRunner did.
+    [Fact]
+    public void TrackRunnerAndProcessRunner_ShareOneProcessStartInfoBuilder()
+        => Assert.Equal(
+            "utf-8", ProcessRunner.NewPsi("cmd.exe").Environment["PYTHONIOENCODING"]);
 
     // The watchdog fires on SILENCE, not total runtime: a long but chatty run
     // must survive.

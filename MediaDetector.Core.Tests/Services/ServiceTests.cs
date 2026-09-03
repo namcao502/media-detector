@@ -10,11 +10,9 @@ namespace MediaDetector.Core.Tests.Services;
 public class StatusServiceTests
 {
     private static StatusResult Sample => new(
-        new DependencyState(true, "3.12.2"),
         new YtdlpState(true, "2026.08.01", UpdateStatus.UpToDate),
         new DependencyState(true, "22.11.0"),
-        new FfmpegState(true, "8.1.2", FfprobeFound: true),
-        new DependencyState(true, "1.48.1"));
+        new FfmpegState(true, "8.1.2", FfprobeFound: true));
 
     [Fact]
     public async Task GetAsync_CachesAfterFirstCall()
@@ -47,23 +45,20 @@ public class StatusServiceTests
         Assert.Equal(2, calls);
     }
 
-    // yt-dlp is only probed and updated when Python is present. mutagen is
-    // reached through the same interpreter, so it is skipped for the same reason.
+    // There is nothing to self-update when the exe was never found, and running
+    // `-U` against a missing file would only produce a confusing spawn error.
     [Fact]
-    public async Task Probe_SkipsYtdlpUpdateWhenPythonMissing()
+    public async Task Probe_SkipsUpdateWhenYtdlpMissing()
     {
         var result = await DependencyChecker.BuildAsync(
-            () => Task.FromResult((false, (string?)null, "python")),
-            _ => throw new InvalidOperationException("must not be called"),
-            _ => throw new InvalidOperationException("must not be called"),
+            () => Task.FromResult((false, (string?)null, (string?)null)),
+            () => throw new InvalidOperationException("must not be called"),
             () => Task.FromResult(new DependencyState(true, "22.11.0")),
-            () => Task.FromResult(new FfmpegState(true, "8.1.2", FfprobeFound: true)),
-            _ => throw new InvalidOperationException("must not be called"));
+            () => Task.FromResult(new FfmpegState(true, "8.1.2", FfprobeFound: true)));
 
-        Assert.False(result.Python.Found);
+        Assert.False(result.Ytdlp.Found);
         Assert.Equal(UpdateStatus.Skipped, result.Ytdlp.UpdateStatus);
-        Assert.False(result.Mutagen.Found);
-        // ffmpeg and Node are independent of Python -- still probed.
+        // Node and ffmpeg are independent of yt-dlp -- still probed.
         Assert.True(result.Ffmpeg.Found);
         Assert.True(result.Node.Found);
     }
@@ -73,87 +68,39 @@ public class StatusServiceTests
     {
         var updated = false;
         var result = await DependencyChecker.BuildAsync(
-            () => Task.FromResult((true, (string?)"3.12.2", "python")),
-            _ => Task.FromResult((true, (string?)"2026.08.01")),
-            _ => { updated = true; return Task.FromResult(UpdateStatus.Updated); },
+            () => Task.FromResult((true, (string?)"2026.08.01", (string?)@"C:\app\bin\yt-dlp.exe")),
+            () => { updated = true; return Task.FromResult(UpdateStatus.Updated); },
             () => Task.FromResult(new DependencyState(true, "22.11.0")),
-            () => Task.FromResult(new FfmpegState(false, null, false)),
-            _ => Task.FromResult(new DependencyState(true, "1.48.1")));
+            () => Task.FromResult(new FfmpegState(false, null, false)));
 
         Assert.True(updated);
         Assert.Equal(UpdateStatus.Updated, result.Ytdlp.UpdateStatus);
-    }
-
-    // The yt-dlp update pip-installs mutagen alongside it, so probing mutagen
-    // first would report a miss the update had already repaired. Ordering is the
-    // whole assertion here.
-    [Fact]
-    public async Task Probe_ChecksMutagenAfterTheYtdlpUpdate()
-    {
-        var updateRan = false;
-        var mutagenProbedAfterUpdate = false;
-
-        await DependencyChecker.BuildAsync(
-            () => Task.FromResult((true, (string?)"3.12.2", "python")),
-            _ => Task.FromResult((true, (string?)"2026.08.01")),
-            _ => { updateRan = true; return Task.FromResult(UpdateStatus.Updated); },
-            () => Task.FromResult(new DependencyState(true, "22.11.0")),
-            () => Task.FromResult(new FfmpegState(true, "8.1.2", FfprobeFound: true)),
-            _ =>
-            {
-                mutagenProbedAfterUpdate = updateRan;
-                return Task.FromResult(new DependencyState(true, "1.48.1"));
-            });
-
-        Assert.True(mutagenProbedAfterUpdate);
-    }
-
-    // A machine with yt-dlp installed some other way (or by a build predating
-    // mutagen in the pip args) reports every other dependency healthy.
-    [Fact]
-    public async Task Probe_ReportsMissingMutagenWithEverythingElseHealthy()
-    {
-        var result = await DependencyChecker.BuildAsync(
-            () => Task.FromResult((true, (string?)"3.12.2", "python")),
-            _ => Task.FromResult((true, (string?)"2026.08.01")),
-            _ => Task.FromResult(UpdateStatus.UpToDate),
-            () => Task.FromResult(new DependencyState(true, "22.11.0")),
-            () => Task.FromResult(new FfmpegState(true, "8.1.2", FfprobeFound: true)),
-            _ => Task.FromResult(new DependencyState(false, null)));
-
-        Assert.False(result.Mutagen.Found);
-        Assert.True(result.Python.Found);
-        Assert.True(result.Ytdlp.Found);
-        Assert.True(result.Node.Found);
-        Assert.True(result.Ffmpeg.Found);
     }
 }
 
 public class DependencyRowTests
 {
     private static StatusResult Status(
-        bool py = true, bool yt = true, bool node = true, bool ff = true,
-        bool ffprobe = true, bool mutagen = true,
+        bool yt = true, bool node = true, bool ff = true,
+        bool ffprobe = true,
         UpdateStatus update = UpdateStatus.UpToDate) => new(
-            new DependencyState(py, py ? "3.12.2" : null),
             new YtdlpState(yt, yt ? "2026.08.01" : null, update),
             new DependencyState(node, node ? "22.11.0" : null),
-            new FfmpegState(ff, ff ? "8.1.2" : null, ff && ffprobe),
-            new DependencyState(mutagen, mutagen ? "1.48.1" : null));
+            new FfmpegState(ff, ff ? "8.1.2" : null, ff && ffprobe));
 
     [Fact]
-    public void Build_ReturnsFiveRows()
-        => Assert.Equal(5, DependencyRows.Build(Status()).Count);
+    public void Build_ReturnsThreeRows()
+        => Assert.Equal(3, DependencyRows.Build(Status()).Count);
 
     [Fact]
     public void Build_AllHealthyMeansNoProblems()
         => Assert.DoesNotContain(DependencyRows.Build(Status()), r => r.State != RowState.Ok);
 
-    // Python and yt-dlp are hard requirements -- error, not warn.
+    // yt-dlp is a hard requirement -- error, not warn.
     [Fact]
-    public void Build_MissingPythonIsAnError()
+    public void Build_MissingYtdlpIsAnError()
         => Assert.Equal(RowState.Error,
-            DependencyRows.Build(Status(py: false)).First(r => r.Label == "Python").State);
+            DependencyRows.Build(Status(yt: false)).First(r => r.Label == "yt-dlp").State);
 
     // Node is a hard requirement too: without a JS runtime every format URL 403s.
     [Fact]
@@ -177,7 +124,7 @@ public class DependencyRowTests
     [Fact]
     public void Build_SummaryLineMatchesTheRows()
         => Assert.Equal(
-            "Python 3.12.2 . yt-dlp 2026.08.01 . Node 22.11.0 . ffmpeg 8.1.2 . mutagen 1.48.1",
+            "yt-dlp 2026.08.01 . Node 22.11.0 . ffmpeg 8.1.2",
             string.Join(" . ", DependencyRows.Build(Status()).Select(r => r.Summary)));
 
     // A satisfied dependency has nothing to install. The view binds the button to
@@ -187,12 +134,15 @@ public class DependencyRowTests
     public void Build_HealthyRowsOfferNoAction()
         => Assert.DoesNotContain(DependencyRows.Build(Status()), row => row.HasAction);
 
+    // Both an Install button and a link: the download can fail behind a proxy or
+    // offline, and vendoring by hand has to stay possible.
     [Fact]
-    public void Build_MissingFfmpegOffersAnInstallAction()
+    public void Build_MissingFfmpegOffersBothAnInstallAndALink()
     {
         var row = DependencyRows.Build(Status(ff: false)).First(r => r.Label == "ffmpeg");
         Assert.True(row.HasAction);
         Assert.Equal("Install", row.ActionLabel);
+        Assert.NotNull(row.HelpUrl);
     }
 
     // A failed update is retried, not installed -- the package is already there.
@@ -240,7 +190,7 @@ public class DependencyRowTests
         var row = DependencyRows.Build(Status(ffprobe: false)).First(r => r.Label == "ffmpeg");
         Assert.Equal(RowState.Warn, row.State);
         Assert.Contains("ffprobe", row.Message);
-        Assert.True(row.HasAction);
+        Assert.NotNull(row.HelpUrl);
     }
 
     // Still a real ffmpeg, so the version stays visible rather than reading as a
@@ -253,63 +203,92 @@ public class DependencyRowTests
         Assert.Equal("ffmpeg 8.1.2 (no ffprobe)", row.Summary);
     }
 
-    // Optional like ffmpeg: the download still succeeds, it just loses the cover
-    // art and keeps the raw YouTube title in the tag.
+    // Two green rows are otherwise indistinguishable: a pip yt-dlp shim is a real
+    // executable reporting the same --version as the standalone build.
     [Fact]
-    public void Build_MissingMutagenIsAWarning()
-        => Assert.Equal(RowState.Warn,
-            DependencyRows.Build(Status(mutagen: false)).First(r => r.Label == "mutagen").State);
-
-    // The pip install behind InstallYtdlp is `install yt-dlp mutagen`, so it
-    // repairs this row -- but only if there is a Python to run it with.
-    [Fact]
-    public void Build_MissingMutagenOffersAnInstallActionWhenPythonIsPresent()
+    public void Build_ReportsWhereEachToolWasResolvedFrom()
     {
-        var row = DependencyRows.Build(Status(mutagen: false)).First(r => r.Label == "mutagen");
-        Assert.True(row.HasAction);
-        Assert.Equal("Install", row.ActionLabel);
+        var status = new StatusResult(
+            new YtdlpState(true, "2026.08.01", UpdateStatus.UpToDate, @"C:\app\bin\yt-dlp.exe"),
+            new DependencyState(true, "22.11.0", @"C:\Program Files\nodejs\node.exe"),
+            new FfmpegState(true, "8.1.2", true, @"C:\app\bin"));
+        var rows = DependencyRows.Build(status);
+
+        Assert.Equal(@"C:\app\bin\yt-dlp.exe", rows.First(r => r.Label == "yt-dlp").ResolvedFrom);
+        Assert.Equal(@"C:\Program Files\nodejs\node.exe",
+            rows.First(r => r.Label == "Node.js").ResolvedFrom);
+        Assert.Equal(@"C:\app\bin", rows.First(r => r.Label == "ffmpeg").ResolvedFrom);
     }
 
     [Fact]
-    public void Build_MissingMutagenOffersNoActionWithoutPython()
-        => Assert.False(DependencyRows.Build(Status(py: false, mutagen: false))
-            .First(r => r.Label == "mutagen").HasAction);
+    public void Build_LeavesResolvedFromNullWhenNothingWasFound()
+        => Assert.Null(DependencyRows.Build(Status(ff: false))
+            .First(r => r.Label == "ffmpeg").ResolvedFrom);
+
+    // Missing yt-dlp always offers the Install button now. It used to be
+    // conditional on Python being present, because installing meant pip.
+    [Fact]
+    public void Build_MissingYtdlpOffersAnInstallAction()
+    {
+        var row = DependencyRows.Build(Status(yt: false)).First(r => r.Label == "yt-dlp");
+        Assert.True(row.HasAction);
+        Assert.Equal("Install", row.ActionLabel);
+    }
 }
 
 public class InstallerTests
 {
-    // mutagen is installed alongside yt-dlp: yt-dlp needs it (or AtomicParsley)
-    // to embed cover art into mp4/m4a.
+    // The standalone exe is fetched straight from the GitHub release, since
+    // there is no longer a Python to pip with.
     [Fact]
-    public void YtdlpInstallArgs_IncludesMutagen()
+    public void YtdlpReleaseUrl_PointsAtTheLatestStandaloneExe()
     {
-        var args = Installer.YtdlpInstallArgs("python");
-        Assert.Contains("yt-dlp", args);
-        Assert.Contains("mutagen", args);
+        Assert.StartsWith("https://", Installer.YtdlpReleaseUrl);
+        Assert.EndsWith("/yt-dlp.exe", Installer.YtdlpReleaseUrl);
+        Assert.Contains("/releases/latest/", Installer.YtdlpReleaseUrl);
     }
 
     [Fact]
-    public void YtdlpUpdateArgs_UsesPipUpgradeNotSelfUpdater()
+    public void FfmpegReleaseUrl_IsTheStableGyanZip()
     {
-        var args = Installer.YtdlpUpdateArgs("python");
-        Assert.Contains("--upgrade", args);
-        Assert.DoesNotContain("-U", args);
+        Assert.StartsWith("https://", Installer.FfmpegReleaseUrl);
+        Assert.EndsWith(".zip", Installer.FfmpegReleaseUrl);
+    }
+
+    // nodejs.org has no "latest LTS" URL, so the version is read from the release
+    // index. Entries are newest-first and a non-LTS line carries `lts: false`.
+    [Fact]
+    public void LatestLtsVersion_SkipsNonLtsReleases()
+    {
+        const string json = """
+            [
+              {"version":"v25.0.0","lts":false},
+              {"version":"v24.9.0","lts":"Jod"},
+              {"version":"v22.11.0","lts":"Iron"}
+            ]
+            """;
+        Assert.Equal("v24.9.0", Installer.LatestLtsVersion(json));
     }
 
     [Fact]
-    public void FfmpegWingetArgs_IsNonInteractiveAndPinnedToGyan()
-    {
-        var args = Installer.WingetArgs("Gyan.FFmpeg");
-        Assert.Contains("Gyan.FFmpeg", args);
-        Assert.Contains("--disable-interactivity", args);
-        Assert.Contains("--accept-package-agreements", args);
-        Assert.Contains("--accept-source-agreements", args);
-        Assert.Contains("-e", args);
-    }
+    public void LatestLtsVersion_ReturnsNullWhenNothingIsLts()
+        => Assert.Null(Installer.LatestLtsVersion("""[{"version":"v25.0.0","lts":false}]"""));
 
     [Fact]
-    public void NodeWingetArgs_TargetsTheLtsPackage()
-        => Assert.Contains("OpenJS.NodeJS.LTS", Installer.WingetArgs("OpenJS.NodeJS.LTS"));
+    public void NodeZipUrlFor_BuildsTheWindowsX64Archive()
+        => Assert.Equal(
+            "https://nodejs.org/dist/v22.11.0/node-v22.11.0-win-x64.zip",
+            Installer.NodeZipUrlFor("v22.11.0"));
+
+    // A silent 80 MB download is indistinguishable from a hang.
+    [Fact]
+    public void ProgressLine_ShowsTheTotalWhenTheServerSentOne()
+    {
+        Assert.Equal("ffmpeg: 4.0 / 80.0 MB",
+            Installer.ProgressLine("ffmpeg", 4L * 1024 * 1024, 80L * 1024 * 1024));
+        Assert.Equal("ffmpeg: 4.0 MB",
+            Installer.ProgressLine("ffmpeg", 4L * 1024 * 1024, null));
+    }
 }
 
 public class OutputPathsTests
@@ -419,7 +398,7 @@ public class DetectServiceTests
 
     private static DetectService WithOutput(string stdout, int code = 0, string stderr = "") =>
         new((_, _) => Task.FromResult(new ExecResult(stdout, stderr, code)),
-            _ => Task.FromResult("python"), () => null);
+            () => "yt-dlp.exe", () => null);
 
     // IsYouTubeUrl must gate every call -- this is the injection boundary.
     [Fact]
@@ -428,7 +407,7 @@ public class DetectServiceTests
         var spawned = false;
         var svc = new DetectService(
             (_, _) => { spawned = true; return Task.FromResult(new ExecResult("", "", 0)); },
-            _ => Task.FromResult("python"), () => null);
+            () => "yt-dlp.exe", () => null);
 
         var result = await svc.DetectVideoAsync("https://evil.com/watch?v=abc");
         Assert.False(result.Ok);
@@ -473,7 +452,7 @@ public class DownloadServiceTests
     private static readonly NameSource Source = new("Song", Artist: "Artist");
 
     private static string[] Build(DownloadRequest req, bool hasFfmpeg = true) =>
-        DownloadService.BuildArgs(req, "python", null, hasFfmpeg, @"C:\out", []);
+        DownloadService.BuildArgs(req, "yt-dlp.exe", null, hasFfmpeg, @"C:\out", []);
 
     private static DownloadRequest Req(
         string? custom = null, bool clean = true, NameSource? source = null) =>
@@ -528,7 +507,7 @@ public class DownloadServiceTests
         Assert.Equal("140", args[Array.IndexOf(args, "-f") + 1]);
         Assert.Contains("--no-playlist", args);
         Assert.Contains("--newline", args);
-        Assert.Contains("--embed-thumbnail", args);
+        Assert.Contains("--write-thumbnail", args);
     }
 
     // Without ffmpeg the download must still succeed, just untagged.
@@ -537,7 +516,7 @@ public class DownloadServiceTests
     {
         var args = Build(Req(), hasFfmpeg: false);
         Assert.DoesNotContain("--embed-metadata", args);
-        Assert.DoesNotContain("--embed-thumbnail", args);
+        Assert.DoesNotContain("--write-thumbnail", args);
     }
 
     // The preview and the real filename must come from one function.

@@ -99,10 +99,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     [RelayCommand] private void DismissError() => Error = null;
 
-    // This is the seam the whole "one source of truth" guarantee rests on: if
-    // BuildRequest read a stale copy of CleanNames or CustomName, the previewed
-    // name and the file on disk would diverge. It is a closure over the live view
-    // models, never a snapshot.
+    // A closure over the live view models, never a snapshot: a stale CleanNames or
+    // CustomName here makes the preview and the file on disk diverge.
     partial void OnMediaChanged(MediaInfo? value)
     {
         if (value == null)

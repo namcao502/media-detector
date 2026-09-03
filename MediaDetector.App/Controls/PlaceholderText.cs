@@ -2,12 +2,9 @@ using System.Windows;
 
 namespace MediaDetector.App.Controls;
 
-// WPF has no watermark/placeholder on TextBox, so the global TextBox template
-// draws this string greyed out whenever the box is empty.
-//
-// An attached property rather than reusing Tag: Tag is a general-purpose slot,
-// and the first later use of it for anything else would silently blank the
-// placeholder with no error to explain it.
+// WPF has no TextBox watermark, so the global template draws this when empty.
+// An attached property rather than Tag: Tag is a general-purpose slot, and the
+// first other use of it would silently blank the placeholder.
 public static class PlaceholderText
 {
     public static readonly DependencyProperty TextProperty =

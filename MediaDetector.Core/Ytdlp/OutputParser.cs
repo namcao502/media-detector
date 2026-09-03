@@ -108,10 +108,8 @@ public static class OutputParser
         new(@"^\[info\]\s+Writing\s+\w+\s+thumbnail(?:\s+\S+)?\s+to:\s*(.+)$",
             RegexOptions.CultureInvariant);
 
-    // yt-dlp downloads cover art to a sibling file and deletes it once the embed
-    // postprocessor runs. A failed or cancelled download never reaches that step,
-    // orphaning the image next to the media. Neither --paths nor `-o thumbnail:`
-    // redirects it (both verified), so the path is scraped from this line.
+    // Scraped, because neither --paths nor `-o thumbnail:` redirects the image
+    // (both verified). Used to clean up after a run that died before embedding.
     public static string? ParseThumbnailPath(string line)
     {
         var match = ThumbnailWrite.Match(line);

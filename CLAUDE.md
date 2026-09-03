@@ -17,7 +17,7 @@ Run from the repo root -- the projects are not nested under a `desktop/` subfold
 ```bash
 dotnet build MediaDetector.sln                       # build everything
 dotnet run --project MediaDetector.App               # run the app
-dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj   # 262 tests, ~9s
+dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj   # 268 tests, ~9s
 dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj --filter "FullyQualifiedName~PlaylistOrchestratorTests"
 ```
 
@@ -29,29 +29,78 @@ dotnet test MediaDetector.Core.Tests/MediaDetector.Core.Tests.csproj --filter "F
 |---|---|
 | `MediaDetector.Core` | All logic. **No UI reference** -- everything here is testable headless |
 | `MediaDetector.App` | WPF views, view models, theme |
-| `MediaDetector.Core.Tests` | 262 xUnit cases. No network, no spawning |
+| `MediaDetector.Core.Tests` | 268 xUnit cases. No network. Spawns only Python/Node, for the encoding and no-shell guarantees |
 | `MediaDetector.App.Tests` | Exists but empty. The view models touch `Application.Current.Dispatcher` in their constructors, so testing them needs an `Application` instance |
 
 ## Runtime dependencies (external, checked at runtime, not NuGet)
 
-| Tool | Check | Install | Required |
-|------|-------|---------|----------|
-| Python 3.8+ | `python`/`python3 --version` | Manual (python.org) | Yes |
-| yt-dlp | `python -m yt_dlp --version` | In-app: `python -m pip install yt-dlp mutagen` | Yes |
-| **Node.js** | `node --version` at a resolved absolute path | In-app: winget `OpenJS.NodeJS.LTS` / choco `nodejs-lts` | **Yes** |
-| ffmpeg (+ffprobe) | `ffmpeg -version` **and** `ffprobe -version` | In-app: winget `Gyan.FFmpeg` / choco; or vendored `vendor/` | Optional |
-| mutagen | `python -c "import mutagen"` | In-app: rides along with the yt-dlp install | Optional |
+**Vendor-only.** The resolvers look at exactly two folders, both owned by the app:
 
-Both pip and yt-dlp are invoked as `python -m ...` (`YtdlpArgs.Pip` / `YtdlpArgs.Ytdlp`) because a fresh python.org install does not put Python's `Scripts` dir on PATH. yt-dlp is updated with `pip install --upgrade`, not `yt-dlp -U`, which refuses for pip installs. `mutagen` rides along because yt-dlp needs it (or AtomicParsley) to embed cover art into mp4/m4a; the ffmpeg-only fallback fails there and produces files with no image data.
+- `<app>/bin` -- what `MediaDetector.App.csproj` copies `vendor/*.exe` into at build time (`ToolResolver.VendorBin`)
+- `<app>/data/tools` -- what the Install buttons download into (`ToolResolver.DownloadedToolsDir`)
 
-### The two "optional" rows are what silently lose cover art and tags
+PATH, winget and Chocolatey are **not** consulted. The two folders must stay distinct and the second is deliberately not called `bin`: MSBuild rewrites `VendorBin` on every build, so a downloaded copy of the same filename there would be clobbered on the next build and restored on the next Install, flip-flopping silently.
 
-Both are optional only in the sense that a download still succeeds. Miss either and the file arrives with no image; miss mutagen and it *also* keeps the raw YouTube title in its tag forever, because `MetadataTagger` is pure mutagen and never touches ffmpeg. Neither failure surfaces on its own -- `TryWriteTagsAsync` is best-effort by design and `DownloadService` discards its result, yt-dlp degrades mutagen -> AtomicParsley -> ffmpeg without erroring, and `FormatArgs.Metadata` drops every embed flag when ffmpeg is absent. Every one of those is individually correct; stacked, they left the app with no way to say the feature was off. That is why both get their own status row rather than being inferred from the yt-dlp and ffmpeg rows.
+| Tool | Check | In-app Install downloads | Required |
+|------|-------|--------------------------|----------|
+| yt-dlp | `yt-dlp.exe --version` | The GitHub release exe | Yes |
+| **Node.js** | `node --version` at an absolute path | Latest LTS zip, extracts `node.exe` | **Yes** |
+| ffmpeg (+ffprobe) | `ffmpeg -version` **and** `ffprobe -version` | gyan's release zip, extracts both exes | Optional |
 
-Two traps this cost real time on:
+Each also takes a hand-placed copy in `vendor/`, which wins over the download.
 
-- **mutagen is never installed in its own right.** It only ever appears inside `pip install yt-dlp mutagen`, so a machine that got yt-dlp any other way -- by hand, or from a build predating that arg -- has a perfectly working yt-dlp and no mutagen. `BuildAsync` therefore probes it **strictly after** `updateYtdlp`, which installs it; probing first reports a miss the update just repaired. `Probe_ChecksMutagenAfterTheYtdlpUpdate` pins the ordering.
-- **`ResolveFfmpegDir` matches on both exes, not just `ffmpeg.exe`.** `--ffmpeg-location` points yt-dlp at one directory and cover-art embedding runs ffprobe out of it, so a half-populated dir (typically a `vendor/` given only `ffmpeg.exe`) used to beat a complete install further down the candidate list and lose the image behind a green row. Requiring both makes it fall through to the next candidate, or to PATH.
+`Installer` streams progress through a `Channel` because `yield return` cannot sit inside the `try/catch` a download needs -- the same reason `LineStream` uses one. Drained with `CancellationToken.None` so a cancelled install still reports why it stopped. Progress every 4 MB: a silent 106 MB download is indistinguishable from a hang.
+
+Zip entries are matched on **file name**, never on a path inside the archive -- both zips nest their payload under a versioned root (`ffmpeg-7.1-essentials_build/bin/`). The destination is built from our own constant, never from the entry, so a crafted archive cannot escape the target folder.
+
+nodejs.org publishes no stable "latest LTS" URL, so `LatestLtsVersion` reads `dist/index.json`, where entries are newest-first and non-LTS lines carry `lts: false`. That is the one fragile link here; gyan's ffmpeg URL is stable by contrast.
+
+**There is no Python row, and no mutagen row.** Both were removed, in that order, and the order was forced:
+
+- `MetadataTagger` used to shell out to `python -c "from mutagen import File"`. Moving it to **TagLib#** (`MediaDetector.Core.csproj`) made tagging in-process and killed the mutagen dependency.
+- Only *then* could Python go, by switching `YtdlpArgs.Ytdlp` from `python -m yt_dlp` to the **standalone `yt-dlp.exe`**, which bundles its own Python. Doing this first would have achieved nothing -- `MetadataTagger` still needed an interpreter.
+
+Consequences worth knowing:
+
+- `yt-dlp.exe -U` is now the update path and it works. The old comment saying `-U` refuses was true only of a **pip** install, which is what this used to be.
+- The Install button downloads into `ToolResolver.DownloadedToolsDir`, staged through a `.part` file so an interrupted download never leaves a truncated exe for the resolver to find. It cannot write to `vendor/`, so a stale vendored copy always wins -- update that by hand.
+- **In dev, `data/` sits inside `bin/Debug/net10.0-windows/`**, so `dotnet clean` deletes ~300 MB of downloaded tools along with the build output. In a published folder `data/` is a sibling of the exe and survives.
+- **Python is still a dev dependency of the test suite.** `RunAsync_RoundTripsNonAsciiChildOutput` and `StreamAsync_RoundTripsNonAsciiChildOutput` need a real Python to reproduce the mangling they guard against, and `yt-dlp.exe` cannot run an arbitrary `-c` script. `NonAscii.ResolvePythonAsync` fails loudly rather than skipping.
+- **`PYTHONIOENCODING=utf-8` in `ProcessRunner.NewPsi` is still load-bearing.** `yt-dlp.exe` is that same Python frozen by PyInstaller and reads it identically. Removing it brings the `h?i kch` mangling straight back.
+- PyInstaller unpacks to temp on every launch (~1-2s), and a playlist spawns one process per track. Defender also flags PyInstaller binaries more readily than a pip install.
+
+### ffmpeg is the one remaining optional row
+
+Optional only in that a download still succeeds. Without it `FormatArgs.Metadata` returns `[]`, so there is no text metadata, no chapters, and no cover art at all. That gate is also what made dropping mutagen free: cover art already required ffmpeg, so using ffmpeg to convert the thumbnail to jpg added nothing new.
+
+**`ResolveFfmpegDir` matches on both exes, not just `ffmpeg.exe`.** `--ffmpeg-location` points yt-dlp at one directory and the thumbnail conversion runs out of it, so a half-populated dir (typically a `vendor/` given only `ffmpeg.exe`) used to beat a complete install further down the candidate list and lose the image behind a green row. Requiring both makes it fall through to the next candidate, or to PATH.
+
+### Why a system install is deliberately invisible
+
+A green row has to mean "this copy of the app carries what it needs", and a PATH lookup made it mean "this machine happens to have it" instead. Those came apart in practice: with `vendor/` empty every row still went green, and the `yt-dlp.exe` that answered was the **pip shim** in Python's `Scripts` dir -- a real executable reporting the same `--version` as the standalone build, silently keeping Python in the loop. `RowAction.InstallNode` and `InstallFfmpeg` went with it: winget and Chocolatey install system-wide, so the button would have reported success onto a row that stayed red.
+
+Consequences to keep in mind:
+
+- `YtdlpExeOrDefault` falls back to `<app>/bin/yt-dlp.exe`, **not** to a bare `"yt-dlp.exe"` -- a bare name resolves through PATH at spawn time and would put the system install straight back.
+- `ProbeFfmpegAsync` returns not-found rather than running a bare `ffmpeg`.
+- `DependencyRows` stays pure and never touches `ToolResolver`; the concrete folder to copy into comes from `StatusBarViewModel.VendorHint`.
+- An empty `vendor/` means the app genuinely cannot download. That is the intended state, not a bug.
+
+### A candidate must be a real executable, not just a filename
+
+`FirstDirWith` calls `ToolResolver.IsExecutable`, not `File.Exists`. Same reasoning as the both-exes rule above, generalised: the vendored `bin/` is probed **first**, so anything invalid sitting there beats a working install further down the list. A half-finished download, a placeholder, or a file renamed by mistake all pass `File.Exists` — verified by dropping a 5-byte text file named `yt-dlp.exe` into `vendor/`, which the resolver accepted outright.
+
+The check is the `MZ` signature plus a 1 KB floor: two bytes, no spawn, cheap enough for the resolver's hot path. It answers "is this a program at all". The status probes still run `--version`, which is what answers "is it the **right** program" — keep both, they catch different things.
+
+Four tests pin it, and all four were confirmed to fail when `IsExecutable` is downgraded to `File.Exists`.
+
+### Settings, logs and downloads
+
+`AppPaths.DataRoot` is `<app>/data` when that is writable, else `%LOCALAPPDATA%\MediaDetector`. Writability is probed by actually writing a file, because UAC virtualization makes the permission bits unreliable. Settings and logs and the downloaded yt-dlp all sit under it, so a copied app folder keeps them; an install under Program Files still works via the fallback.
+
+`AppSettings.Load` reads `AppPaths.LegacyRoot` when the app-local file does not exist, so the move does not read as a factory reset. Saves always target `DataRoot`, which completes the migration. Logs are not migrated -- they are disposable by design.
+
+**User downloads stay in `~/Documents/MediaDetector`** (`OutputPaths`). Music is the user's data, and burying gigabytes in the program folder would make the app unmovable, which is the opposite of the goal.
 
 ### Node is the one genuinely new dependency
 
@@ -78,7 +127,8 @@ Three non-obvious rules, all learned the hard way:
 
 1. **EOF sentinel, not `Process.Exited`.** The exit event can beat the async stdout drain, and the dropped tail is exactly where `savedPath` lives. Both `LineStream` and `TrackRunner` complete their channel only after *both* streams report null.
 2. **Merge stdout and stderr through one `Channel`** or you deadlock on the 64 KB pipe buffer.
-3. **`PYTHONIOENCODING=utf-8` on every child**, set once in `ProcessRunner.NewPsi` (which `LineStream` also uses, so the contract lives in one place). We decode the pipe as UTF-8, but Python encodes a *redirected* stdout in the ANSI codepage -- `cp1252` on a normal Windows box -- and yt-dlp's `write_string` drops what will not fit with `errors='ignore'`. So a folder named `hài kịch` arrived as `h?i kch`: one character replaced, one deleted outright. Every `savedPath` for a non-ASCII path then named a file that did not exist, and `MetadataTagger` failed on all of them while the download itself looked fine. Silent, because the tag write is best-effort by design. Regression tests: `RunAsync_RoundTripsNonAsciiChildOutput` and `StreamAsync_RoundTripsNonAsciiChildOutput` -- both fail with the exact `h?i kch` mangling if the env var is removed.
+3. **`--encoding utf-8` on every yt-dlp call** (`YtdlpArgs.Ytdlp`). The frozen `yt-dlp.exe` **ignores `PYTHONIOENCODING` and `PYTHONUTF8` alike** -- verified at the byte level: with either env var, `--print filename` returned `5b47 616c 6120 6369` ("[Gala ci"); with the flag it returned `63 c6b0 e1bb9d 69` ("cười"). Without it every non-ASCII `savedPath` names a file that does not exist, so `MetadataTagger` cannot open it, the tag is never written, and the fetched `.jpg` is never deleted -- 142 tracks arrived that way. `Ytdlp_ForcesUtf8Output` pins the flag. This is the same bug as item 4, resurfacing because the mitigation there does not reach a PyInstaller build.
+4. **`PYTHONIOENCODING=utf-8` on every child**, set once in `ProcessRunner.NewPsi`. **Every spawn path must go through it** -- `TrackRunner` hand-rolled its own `ProcessStartInfo` for a while and so applied only half the contract, on the one path every download actually takes. `TrackRunnerAndProcessRunner_ShareOneProcessStartInfoBuilder` asserts it directly, because the three `*RoundTripsNonAsciiChildOutput` tests **go vacuous whenever the shell running the suite already exports `PYTHONIOENCODING`** -- the child inherits it and passes no matter what the code does. Keep both: one is end-to-end, only the other cannot silently stop guarding anything. We decode the pipe as UTF-8, but Python encodes a *redirected* stdout in the ANSI codepage -- `cp1252` on a normal Windows box -- and yt-dlp's `write_string` drops what will not fit with `errors='ignore'`. So a folder named `hài kịch` arrived as `h?i kch`: one character replaced, one deleted outright. Every `savedPath` for a non-ASCII path then named a file that did not exist, and `MetadataTagger` failed on all of them while the download itself looked fine. Silent, because the tag write is best-effort by design. Regression tests: `RunAsync_RoundTripsNonAsciiChildOutput` and `StreamAsync_RoundTripsNonAsciiChildOutput` -- both fail with the exact `h?i kch` mangling if the env var is removed.
 
 **Hang watchdog.** ffmpeg postprocessing is silent by design (yt-dlp swallows its output), so a deadline is the only way to tell "working" from "wedged". `TrackRunner` re-arms a timer on every line; after `DefaultIdleTimeout` (5 min) of silence it emits `HungMarker` and kills the tree. The orchestrator treats a hang as non-transient and stops retrying that track immediately -- otherwise one wedged track costs 10 x 5 min.
 
@@ -130,11 +180,17 @@ Files save as `<title> - <artist>.<ext>`. Everything here is pure and has tests.
 
 ### Embedded metadata (`Core/Ytdlp/MetadataTagger.cs`)
 
-Renaming a file, ours or the user's own in File Explorer, only ever changes the filename. Apple Music and the Windows Music app read the file's **embedded** tag (ID3 `TIT2`/`TPE1`, MP4 `©nam`/`©ART`), which `--embed-metadata` (`FormatArgs.Metadata`) writes from the raw YouTube title/uploader regardless of what we name the file. `MetadataTagger.TryWriteTagsAsync` corrects that tag after a successful download, using `FileNaming.SplitName`'s same title/artist split as `DownloadStem` -- kept as two separate tag fields rather than one combined string. `FileNaming.MetadataOverrideFor` decides whether it's worth doing at all: skipped when `CleanNames` is off and there is no typed name, since `RawStem`'s filename is the raw title verbatim and already matches what `--embed-metadata` wrote by default.
+Renaming a file, ours or the user's own in File Explorer, only ever changes the filename. Apple Music and the Windows Music app read the file's **embedded** tag (ID3 `TIT2`/`TPE1`, MP4 `©nam`/`©ART`), which `--embed-metadata` (`FormatArgs.Metadata`) writes from the raw YouTube title/uploader regardless of what we name the file. `MetadataTagger.TryWriteTagsAsync` corrects that tag after a successful download, using `FileNaming.SplitName`'s same title/artist split as `DownloadStem` -- kept as two separate tag fields rather than one combined string. `FileNaming.MetadataOverrideFor` decides whether the title/artist is worth rewriting: it returns null when `CleanNames` is off and there is no typed name, since `RawStem`'s filename is the raw title verbatim and already matches what `--embed-metadata` wrote.
 
-Values reach the tag writer purely through Python `argv`, not yt-dlp's own `--parse-metadata`. That flag regex-matches an expanded output-template string, which is fragile for literal title text containing regex/template metacharacters (`%`, `(`, `)` -- common in real titles) and only runs when ffmpeg is present. `argv` has neither problem and needs no ffmpeg -- it works off mutagen alone (already a required pip dependency, `Dependencies/Installer.cs`). Best-effort only: `File(path, easy=True)` returns `None` for a container mutagen cannot tag (opus-in-webm from "Best available, no conversion"), and any failure is logged, never raised -- a tag-write failure must not fail a download that otherwise succeeded.
+**This is TagLib#, not mutagen, and not yt-dlp's `--parse-metadata`.** That flag regex-matches an expanded output-template string, fragile for literal title text containing regex/template metacharacters (`%`, `(`, `)` -- common in real titles). TagLib# takes plain strings and needs no interpreter, which is what let Python go entirely. Best-effort only: every exception is caught, logged, and reported as `false` -- deliberately broad, because a tag-write failure escaping into a download's async iterator would turn a finished download into a reported failure.
 
-**Raw-mode downloads are never auto-corrected** (that is the whole point of `MetadataOverrideFor`'s skip), so a file downloaded with Clean names off keeps whatever `--embed-metadata` wrote, permanently. The "Fix metadata" button in the header (`MainWindow.xaml`, `MainViewModel.OpenMetadataFixCommand`) opens `MetadataFixWindow`, a self-contained dialog for exactly that case: pick any file on disk, its *current* title/artist tag is read via `MetadataTagger.ReadTagsAsync` to prefill two editable fields, and Save calls `TryWriteTagsAsync` directly -- no re-download, no original YouTube URL needed. `ReadTagsAsync` prints JSON rather than plain lines because `ProcessRunner` trims stdout as one block, which a delimiter-based format could misparse if a tag value contained a newline.
+**It also writes the cover art**, which is the part that changed shape. `FormatArgs.Metadata` asks yt-dlp for `--write-thumbnail --convert-thumbnails jpg` rather than `--embed-thumbnail`, because yt-dlp's own embed step needs mutagen for mp4/m4a (its ffmpeg fallback writes no usable image data). So three things follow, and all three are easy to break:
+
+1. `TryWriteTagsAsync` runs after **every** successful download, not only when `MetadataOverrideFor` returns non-null. A null override means "leave title/artist alone, still write the picture" -- the raw-mode branch, pinned by `TryWriteTags_WritesCoverArtWithoutTouchingTitleWhenOverrideIsNull`.
+2. **The caller must delete the .jpg.** Without the embed postprocessor nothing cleans it up, so every finished download would otherwise leave a stray image. Both download paths call `DownloadTranslator.DeleteThumbnail` right after, and do it even when the embed failed.
+3. `DownloadTranslator.CoverPathFor` **derives** the path from `savedPath` rather than scraping the log. `OutputParser.ParseThumbnailPath` matches the pre-conversion `.webp`, which no longer exists by then; `RemoveStrayThumbnail` keeps using it for the failure path, and deletes the `.jpg` sibling too in case the convertor ran before the download died.
+
+**Raw-mode title/artist is still never auto-corrected**, so a file downloaded with Clean names off keeps whatever `--embed-metadata` wrote. The "Fix metadata" button in the header (`MainWindow.xaml`, `MainViewModel.OpenMetadataFixCommand`) opens `MetadataFixWindow` for exactly that case: pick any file on disk, its *current* tag is read via `MetadataTagger.ReadTagsAsync` to prefill two editable fields, and Save calls `TryWriteTagsAsync` directly -- no re-download, no original YouTube URL needed.
 
 ### Bulk repair (`Core/Ytdlp/MetadataBackfill.cs`)
 
@@ -145,6 +201,14 @@ The correction is recomputed from each file's **own current tag**, not by revers
 - **`CorrectionFor` is pure and returns null when nothing needs writing**, which is what makes a second run a no-op instead of rewriting the whole folder. `CorrectionFor_IsIdempotent` pins it.
 - **Not recursive, on purpose.** Pointed at a music library root this would run `CleanTitle`/`ParseShowTitle` over unrelated files. Scoped to the one folder the user picks, with a count confirmed before any write.
 - A tag that already equals its `SplitName` output is left alone -- titles with no cast pattern to extract (no quoted span, no genre + comma-list) legitimately keep their pipes, and tag and filename still agree.
+- `TaggableExtensions` still excludes `.opus`/`.webm` even though TagLib# could open an `.opus`. The download path does not correct their tags either, so widening this alone would start rewriting files nothing else touches.
+
+**It also absorbs a stray `.jpg`.** `CoverFor` matches a sibling with the *exact same stem*, which is how `--write-thumbnail` names it and what distinguishes it from an unrelated image in the folder. This exists because the `--encoding` bug left 142 tracks with an uncorrected tag *and* an unembedded cover; re-downloading would not fix them, since yt-dlp skips a file it already has.
+
+Two rules here differ from the download path on purpose:
+
+- **Cover art is not gated behind the tag correction.** A file whose tag is already right can still have a stray image, so `correction == null && cover == null` is the only "nothing to do" case. `RunAsync_RepairsCoverArtEvenWhenTheTagIsAlreadyCorrect` pins it.
+- **The image is deleted only after a successful write.** `DownloadService` deletes regardless, because there the image was just fetched and is re-fetchable; here it is the only copy. Deleting is also what makes a second pass a no-op.
 
 ### Diagnostics (`Core/Diagnostics/AppLog.cs`)
 

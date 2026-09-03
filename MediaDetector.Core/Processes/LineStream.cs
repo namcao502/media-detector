@@ -26,12 +26,9 @@ public static class LineStream
         using var job = new JobObject();
         using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
 
-        // Process.Exited can fire BEFORE the async stdout/stderr callbacks have
-        // drained, which silently drops the last lines -- exactly the ones that
-        // matter (the final `[Merger] Merging formats into "..."` that becomes
-        // savedPath, and trailing ERROR: text). Node's 'close' event gave that
-        // guarantee for free; .NET does not. Each stream signals EOF with a null
-        // Data, so complete only once BOTH have.
+        // Process.Exited can beat the async stdout/stderr drain, dropping exactly
+        // the last lines that matter (savedPath, trailing ERROR: text). Each
+        // stream signals EOF with a null Data, so complete only once BOTH have.
         var streamsFinished = 0;
 
         void OnData(object _, DataReceivedEventArgs e)

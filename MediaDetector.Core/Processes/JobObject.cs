@@ -4,12 +4,9 @@ using System.Runtime.Versioning;
 
 namespace MediaDetector.Core.Processes;
 
-// Kills a spawned download and everything it started. yt-dlp runs ffmpeg as a
-// child; Process.Kill() reaps only the direct child and would leave the encoder
-// running and holding the output file open. Every process assigned to this job
-// dies when the job handle closes, so an orphan is impossible by construction.
-//
-// This replaces the `taskkill /pid N /T /F` shell-out at lib/ytdlp.ts:501.
+// Process.Kill() reaps only the direct child, leaving yt-dlp's ffmpeg running and
+// holding the output file. Everything in the job dies with the handle, so an
+// orphan is impossible by construction.
 [SupportedOSPlatform("windows")]
 public sealed partial class JobObject : IDisposable
 {
@@ -55,18 +52,9 @@ public sealed partial class JobObject : IDisposable
         }
     }
 
-    // Assign immediately after Process.Start, before the child has time to spawn
-    // its own children -- anything it starts afterwards inherits the job.
-    //
-    // Process.Start -> Assign is NOT atomic: a grandchild spawned inside that
-    // window escapes the job. The window is microseconds and yt-dlp does not
-    // spawn ffmpeg until well into the run, so this is accepted rather than
-    // solved (solving it needs CreateProcess with CREATE_SUSPENDED, which
-    // System.Diagnostics.Process does not expose).
-    //
-    // Returns false when the process could not be assigned. Callers must not
-    // ignore this: an unassigned process survives Dispose, which is exactly the
-    // orphaned-ffmpeg failure this type exists to prevent.
+    // Call immediately after Process.Start -- the gap is not atomic, so anything
+    // spawned inside it escapes the job (accepted: microseconds, and yt-dlp starts
+    // ffmpeg much later). A false return means the process survives Dispose.
     public bool Assign(Process process)
     {
         if (_disposed || _handle == 0) return false;

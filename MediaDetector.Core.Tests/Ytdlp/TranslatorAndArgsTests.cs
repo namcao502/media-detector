@@ -134,28 +134,33 @@ public class YtdlpArgsTests
     public void YouTubeAccess_OmitsRuntimeFlagWhenNodeIsMissing()
         => Assert.DoesNotContain("--js-runtimes", YtdlpArgs.YouTubeAccess(null));
 
-    // Run as a module: the yt-dlp shim lands in Python's Scripts dir, which a
-    // fresh python.org install does not put on PATH.
+    // The standalone exe IS the command -- no interpreter in front of it. This
+    // used to be `python -m yt_dlp`; dropping the interpreter is what removed
+    // Python as a dependency.
     [Fact]
-    public void Ytdlp_InvokesTheModuleNotTheShim()
+    public void Ytdlp_InvokesTheExeDirectly()
     {
-        var args = YtdlpArgs.Ytdlp("python", Node, ["--version"]);
-        Assert.Equal(["python", "-m", "yt_dlp"], args.Take(3));
+        var args = YtdlpArgs.Ytdlp(@"C:\app\bin\yt-dlp.exe", Node, ["--version"]);
+        Assert.Equal(@"C:\app\bin\yt-dlp.exe", args[0]);
+        Assert.DoesNotContain("-m", args);
         Assert.Equal("--version", args[^1]);
+    }
+
+    // Regression for the second coming of "h?i kch": the frozen exe ignores
+    // PYTHONIOENCODING, so without this no tag is written and every .jpg remains.
+    [Fact]
+    public void Ytdlp_ForcesUtf8Output()
+    {
+        var args = YtdlpArgs.Ytdlp("yt-dlp.exe", Node, ["--version"]);
+        Assert.Equal("utf-8", args[Array.IndexOf(args, "--encoding") + 1]);
     }
 
     [Fact]
     public void Ytdlp_PrependsAccessArgsBeforeCallerArgs()
     {
-        var args = YtdlpArgs.Ytdlp("python", Node, ["--dump-json", "URL"]);
+        var args = YtdlpArgs.Ytdlp("yt-dlp.exe", Node, ["--dump-json", "URL"]);
         Assert.True(Array.IndexOf(args, "--js-runtimes") < Array.IndexOf(args, "--dump-json"));
     }
-
-    [Fact]
-    public void Pip_InvokesTheModule()
-        => Assert.Equal(
-            ["python", "-m", "pip", "install", "--upgrade", "yt-dlp", "mutagen"],
-            YtdlpArgs.Pip("python", ["install", "--upgrade", "yt-dlp", "mutagen"]));
 
     [Fact]
     public void ProgressTemplate_RequestsNewlineAndRawNumbers()

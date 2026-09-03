@@ -8,4 +8,18 @@
     <TargetFramework>net10.0-windows</TargetFramework>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Reads and writes the embedded title/artist tag and the cover art in
+         process. Replaces the `python -c "from mutagen import File"` spawn
+         MetadataTagger used to do, which is what let Python be dropped. -->
+    <PackageReference Include="TagLibSharp" Version="2.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- So the encoding contract can be asserted on NewPsi directly. The
+         round-trip tests that spawn Python go vacuous whenever the shell running
+         them already exports PYTHONIOENCODING. -->
+    <InternalsVisibleTo Include="MediaDetector.Core.Tests" />
+  </ItemGroup>
+
 </Project>

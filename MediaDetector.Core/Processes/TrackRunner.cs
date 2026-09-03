@@ -1,32 +1,26 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.Versioning;
-using System.Text;
 using System.Threading.Channels;
 using MediaDetector.Core.Diagnostics;
 
 namespace MediaDetector.Core.Processes;
 
-// Runs one yt-dlp download, yielding merged stdout+stderr lines. ExitCode is
-// valid once enumeration completes and is what tells success from failure --
-// the equivalent of the async generator's RETURN value at lib/ytdlp.ts:529.
+// One yt-dlp download, yielding merged stdout+stderr. ExitCode is valid only once
+// enumeration completes, and is what tells success from failure.
 [SupportedOSPlatform("windows")]
 public sealed class TrackRunner
 {
-    // How long a run may produce no output at all before it is treated as hung.
-    // ffmpeg postprocessing is silent by design -- yt-dlp swallows its output --
-    // so a deadline is the only way to tell "still working" from "stuck".
-    // Generous enough for a slow postprocess on a long track, but bounded:
-    // without it one wedged track stalls a whole playlist indefinitely.
+    // ffmpeg postprocessing is silent by design, so a deadline is the only way to
+    // tell "still working" from "wedged".
     public static readonly TimeSpan DefaultIdleTimeout = TimeSpan.FromMinutes(5);
 
-    // Marks the error line a timeout produces. A hang is not a flaky network, so
-    // callers use this to stop retrying instead of burning the deadline again.
+    // A hang is not a flaky network, so callers use this to stop retrying rather
+    // than burn the deadline again.
     public const string HungMarker = "treating the download as hung";
 
-    // Prefixed to this run's log lines. With several tracks downloading at once
-    // their output interleaves, so without it there is no way to tell which spawn
-    // a "finished" belongs to. Empty for a single download, where it is obvious.
+    // Concurrent tracks interleave their output; without this there is no telling
+    // which spawn a "finished" belongs to.
     public string Label { get; init; } = "";
 
     public int ExitCode { get; private set; } = 1;
@@ -39,15 +33,10 @@ public sealed class TrackRunner
         var idle = idleTimeout ?? DefaultIdleTimeout;
         var watchdogEnabled = idle > TimeSpan.Zero;
 
-        var psi = new ProcessStartInfo(args[0])
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-        };
+        // NewPsi, not a hand-rolled copy: the UTF-8 pipe encoding and
+        // PYTHONIOENCODING are one contract and this used to silently omit the
+        // second half of it.
+        var psi = ProcessRunner.NewPsi(args[0]);
         foreach (var arg in args.Skip(1)) psi.ArgumentList.Add(arg);
 
         var channel = Channel.CreateUnbounded<string>(
@@ -70,9 +59,8 @@ public sealed class TrackRunner
             }
             catch (ObjectDisposedException)
             {
-                // A line can arrive on the Process event thread after the iterator
-                // has torn down and disposed the CTS. Unhandled, this crashes the
-                // process from a thread no caller can catch on.
+                // A line can arrive after the iterator tore down and disposed the
+                // CTS. Unhandled, it crashes from a thread no caller can catch on.
             }
         }
 
@@ -112,9 +100,8 @@ public sealed class TrackRunner
             yield break;
         }
 
-        // The exact command line. This is the single most useful log entry when a
-        // download misbehaves -- it can be pasted into a terminal verbatim to
-        // reproduce, and it shows whether --js-runtimes actually got a Node path.
+        // Pasteable into a terminal verbatim -- the most useful entry in the log
+        // when a download misbehaves.
         AppLog.Info("spawn", Label + string.Join(" ", args.Select(Quote)));
 
         job.Assign(proc);
